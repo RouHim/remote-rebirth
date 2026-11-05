@@ -7,7 +7,12 @@ mod error;
 #[cfg(test)]
 mod fake;
 mod filewriter;
+mod inspect;
+mod inspect_container;
+#[cfg(test)]
+mod inspect_tests;
 mod journal;
+#[allow(dead_code)] // the compose slice consumes this module
 mod model;
 mod paths;
 mod profile;

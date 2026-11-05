@@ -2,7 +2,9 @@ use crate::error::Error;
 use crate::transport::OpenRead;
 
 pub const REPORT_BYTES: usize = 64;
+#[allow(dead_code)] // used by the write slice
 pub const DATA_PACKET_PAYLOAD: usize = 62;
+#[allow(dead_code)] // used by the write slice
 pub const SEQUENCE_MODULUS: u8 = 64;
 pub const DONE_PACKET: u8 = 0x7E;
 pub const CHUNK_REPLY_FLAG: u8 = 0x80;

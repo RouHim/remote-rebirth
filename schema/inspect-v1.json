@@ -1,0 +1,741 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://remote-rebirth.invalid/schema/inspect-v1.json",
+  "title": "remote-rebirth inspect output",
+  "description": "Version 1 of the JSON emitted by `remote-rebirth inspect --json`. Container addresses are absolute flash addresses; offset is the byte offset in the file.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "container",
+    "raw_slots",
+    "key_table",
+    "key_maps",
+    "devices",
+    "favourites",
+    "ir_records"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "container": {
+      "$ref": "#/$defs/container"
+    },
+    "raw_slots": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/raw_slot"
+      }
+    },
+    "key_table": {
+      "$ref": "#/$defs/key_table"
+    },
+    "key_maps": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/key_map"
+      }
+    },
+    "devices": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/device"
+      }
+    },
+    "watch_tv_activity": {
+      "$ref": "#/$defs/watch_tv_activity"
+    },
+    "favourites": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/favourite"
+      }
+    },
+    "ir_records": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ir_record"
+      }
+    },
+    "state_variables": {
+      "$ref": "#/$defs/state_variables"
+    },
+    "number_senders": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/number_sender"
+      }
+    }
+  },
+  "$defs": {
+    "container": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "size",
+        "end_addr",
+        "base",
+        "checksum",
+        "slots",
+        "pointer_count",
+        "architecture",
+        "skin",
+        "sha256"
+      ],
+      "properties": {
+        "size": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 262144,
+          "description": "File size in bytes."
+        },
+        "end_addr": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Absolute flash address of the PTYY end marker."
+        },
+        "base": {
+          "type": "integer",
+          "const": 131072,
+          "description": "Absolute flash address of the first byte of the Container (0x020000)."
+        },
+        "checksum": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "Stored 16 bit trailer checksum."
+        },
+        "slots": {
+          "const": 15,
+          "description": "Number of section table entries."
+        },
+        "pointer_count": {
+          "const": 15
+        },
+        "architecture": {
+          "type": ["integer", "null"],
+          "description": "Architecture stated by raw slot 1, or null when the slot is absent."
+        },
+        "skin": {
+          "type": ["integer", "null"],
+          "description": "Skin stated by raw slot 1, or null when the slot is absent."
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "raw_slot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index", "name", "offset", "length", "sha256", "known"],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 14
+        },
+        "name": {
+          "type": "string"
+        },
+        "offset": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "File offset, or null for a NULL slot."
+        },
+        "length": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Bytes from this slot to the next non-NULL slot, or to the trailer."
+        },
+        "sha256": {
+          "oneOf": [
+            { "$ref": "#/$defs/sha256" },
+            { "type": "null" }
+          ]
+        },
+        "known": {
+          "type": "boolean",
+          "description": "True when the Architecture 16 slot's meaning is known to this reader. Unknown slots are exposed here and not parsed."
+        }
+      }
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "key_table": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["offset", "count", "entries"],
+      "properties": {
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/key_map_entry"
+          }
+        }
+      }
+    },
+    "key_map": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index", "address", "offset", "wide", "entries"],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "address": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "wide": {
+          "type": "boolean",
+          "description": "True for the wide tagged list form, whose entries carry a flags byte."
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/key_map_entry"
+          }
+        }
+      }
+    },
+    "key_map_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tag", "event", "scan_code", "operand", "opcode"],
+      "properties": {
+        "tag": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "event": {
+          "enum": ["none", "press", "release", "held"]
+        },
+        "scan_code": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 63
+        },
+        "operand": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "opcode": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "action_list": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "Present when the opcode is 0x7F, a call of this action list."
+        },
+        "map_index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255,
+          "description": "Present when the opcode is 0x1F with operand high byte 0xFF, a key map selection."
+        },
+        "send": {
+          "$ref": "#/$defs/ir_reference"
+        }
+      }
+    },
+    "device": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["map_index", "device_key", "ir_group", "record_count"],
+      "properties": {
+        "map_index": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "device_key": {
+          "oneOf": [
+            { "$ref": "#/$defs/device_key" },
+            { "type": "null" }
+          ]
+        },
+        "ir_group": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "device_key": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["place", "label", "scan_code", "event"],
+      "properties": {
+        "place": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "label": {
+          "type": "string"
+        },
+        "scan_code": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 63
+        },
+        "event": {
+          "enum": ["press", "release", "held"]
+        }
+      }
+    },
+    "watch_tv_activity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action_list", "selected_map", "instructions", "sends", "delays"],
+      "properties": {
+        "action_list": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "selected_map": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "instructions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/activity_instruction"
+          }
+        },
+        "sends": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ir_reference"
+          }
+        },
+        "delays": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ir_delay"
+          }
+        }
+      }
+    },
+    "activity_instruction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["opcode", "operand"],
+      "properties": {
+        "opcode": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "operand": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "action_list": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "send": {
+          "$ref": "#/$defs/ir_reference"
+        },
+        "delay": {
+          "$ref": "#/$defs/ir_delay"
+        },
+        "select_map": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "number": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        }
+      }
+    },
+    "ir_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["group", "record"],
+      "properties": {
+        "group": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "record": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        }
+      }
+    },
+    "ir_delay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["group", "tenths"],
+      "properties": {
+        "group": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "tenths": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        }
+      }
+    },
+    "favourite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "scan_code", "map_index", "action_list", "channel"],
+      "properties": {
+        "key": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Positional favourite key when the skin gives the scan code a place, otherwise null."
+        },
+        "scan_code": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 63
+        },
+        "map_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "action_list": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "channel": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Packed-decimal channel value handed to the number sender. Leading zero channels are not represented by this shape."
+        }
+      }
+    },
+    "ir_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["group", "index", "address", "offset", "class", "carrier"],
+      "properties": {
+        "group": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "address": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Absolute flash address of the record's own start."
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "class": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "carrier": {
+          "$ref": "#/$defs/ir_carrier"
+        },
+        "once": {
+          "$ref": "#/$defs/ir_block"
+        },
+        "held": {
+          "$ref": "#/$defs/ir_block"
+        },
+        "tail": {
+          "$ref": "#/$defs/ir_block"
+        },
+        "toggle": {
+          "$ref": "#/$defs/ir_pointer_group",
+          "description": "The second pointer group of a toggling code, the same code with its toggle bit flipped."
+        },
+        "extra_groups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ir_pointer_group"
+          }
+        }
+      }
+    },
+    "ir_carrier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["period_ns", "on_ns", "hertz"],
+      "properties": {
+        "period_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "on_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "hertz": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Derived from the period; null when the period is zero."
+        }
+      }
+    },
+    "ir_block": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["address", "offset", "bytes", "words", "duration_us"],
+      "properties": {
+        "address": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 2
+        },
+        "words": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "duration_us": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "ir_pointer_group": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "once": {
+          "$ref": "#/$defs/ir_block"
+        },
+        "held": {
+          "$ref": "#/$defs/ir_block"
+        },
+        "tail": {
+          "$ref": "#/$defs/ir_block"
+        }
+      }
+    },
+    "state_variables": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "narrow", "wide", "narrow_again", "variables"],
+      "properties": {
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "narrow": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "wide": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "narrow_again": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "variables": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/state_variable"
+          }
+        }
+      }
+    },
+    "state_variable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index", "width", "first", "max", "transitions"],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "width": {
+          "enum": ["narrow", "wide"]
+        },
+        "first": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "transitions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/state_transition"
+          }
+        }
+      }
+    },
+    "state_transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to", "operand", "opcode"],
+      "properties": {
+        "from": {
+          "type": "integer",
+          "minimum": -32768,
+          "maximum": 32767
+        },
+        "to": {
+          "type": "integer",
+          "minimum": -32768,
+          "maximum": 32767
+        },
+        "operand": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "opcode": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "action_list": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        }
+      }
+    },
+    "number_sender": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "flags",
+        "base",
+        "digits",
+        "prologue",
+        "epilogue",
+        "prefix",
+        "digit_tables"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "flags": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "base": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "digits": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "prologue": {
+          "$ref": "#/$defs/instruction_ref"
+        },
+        "epilogue": {
+          "$ref": "#/$defs/instruction_ref"
+        },
+        "prefix": {
+          "$ref": "#/$defs/instruction_ref"
+        },
+        "digit_tables": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/digit_table"
+          }
+        }
+      }
+    },
+    "instruction_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operand", "opcode"],
+      "properties": {
+        "operand": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "opcode": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "action_list": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        }
+      }
+    },
+    "digit_table": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["address", "instructions"],
+      "properties": {
+        "address": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "instructions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/instruction_ref"
+          }
+        }
+      }
+    }
+  }
+}
