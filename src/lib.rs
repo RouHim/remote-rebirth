@@ -1,10 +1,9 @@
+mod architecture;
 mod backup;
 mod cli;
 mod clock;
 mod compose;
 mod compose_build;
-#[cfg(test)]
-mod compose_tests;
 mod container;
 mod detect;
 mod empty;
@@ -13,14 +12,15 @@ mod error;
 mod fake;
 mod filewriter;
 mod frame;
-mod gspm;
 mod inspect;
 mod inspect_container;
-#[cfg(test)]
-mod inspect_tests;
 pub mod ir;
-#[cfg(test)]
-mod ir_tests;
+mod ir_encode;
+mod ir_flipper;
+mod ir_lirc;
+mod ir_pronto;
+mod ir_record;
+mod ir_types;
 mod journal;
 mod model;
 mod paths;
@@ -36,7 +36,17 @@ mod usb;
 mod write;
 
 #[cfg(test)]
+mod architecture_tests;
+#[cfg(test)]
+mod compose_tests;
+#[cfg(test)]
 mod empty_tests;
+#[cfg(test)]
+mod inspect_tests;
+#[cfg(test)]
+mod ir_tests;
+#[cfg(test)]
+mod tables_tests;
 #[cfg(test)]
 mod tests;
 

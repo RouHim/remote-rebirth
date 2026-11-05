@@ -26,9 +26,17 @@ pub fn run(
             "inspect requires --file <path> unless --print-schema is given".into(),
         ));
     };
+    let span = tracing::info_span!("inspect", file = %path.display());
+    let _entered = span.enter();
 
     let bytes = std::fs::read(path)?;
     let parsed = inspect_container::parse(&bytes)?;
+    tracing::info!(
+        size = parsed.container.size,
+        devices = parsed.devices.len(),
+        favourites = parsed.favourites.len(),
+        "parsed Container"
+    );
 
     if json {
         let encoded = serde_json::to_vec(&parsed)?;

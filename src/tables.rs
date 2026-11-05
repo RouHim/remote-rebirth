@@ -5,9 +5,9 @@
 //! `families/no-screen/devices.ts`'s `inCompilerOrder`). The catalogue readers and the six other
 //! architectures are not ported; the empty configuration needs only the writers.
 
+use crate::architecture::TaggedEntry;
 use crate::error::Error;
 use crate::frame::{Piece, Reference};
-use crate::gspm::TaggedEntry;
 
 /// A table of a count and three byte addresses: `u8`, `u16` or `u24` count, then one address per
 /// target. The frame fills each address once the target is placed.
@@ -143,34 +143,4 @@ pub fn in_compiler_order(
         }
     }
     Ok(slots.into_iter().flatten().collect())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn entry(tag: u8) -> TaggedEntry {
-        TaggedEntry {
-            tag,
-            operand: 0,
-            opcode: 0x7F,
-        }
-    }
-
-    #[test]
-    fn a_key_table_of_the_five_empty_entries_is_in_slot_order() {
-        // Hand-computed from Java's hash at sixteen slots: 0xFF is bucket 1, 0x30 bucket 3, 0x2E
-        // bucket 12, 0x2F bucket 13 and 0x2D bucket 15.
-        let added = [0x2D, 0x2E, 0x2F, 0x30, 0xFF].map(entry);
-        let ordered = in_compiler_order(&[], &added).expect("five distinct tags");
-        assert_eq!(
-            ordered.iter().map(|one| one.tag).collect::<Vec<_>>(),
-            vec![0xFF, 0x30, 0x2E, 0x2F, 0x2D]
-        );
-    }
-
-    #[test]
-    fn a_tag_given_twice_is_refused() {
-        assert!(in_compiler_order(&[entry(0x2D)], &[entry(0x2D)]).is_err());
-    }
 }

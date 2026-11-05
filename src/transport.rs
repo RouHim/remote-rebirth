@@ -1,4 +1,5 @@
 use crate::error::Error;
+use crate::protocol::DATA_PACKET_PAYLOAD;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteDescriptor {
@@ -47,7 +48,7 @@ pub fn read_file(session: &mut dyn RemoteSession, path: &str) -> Result<Vec<u8>,
     let read_result = (|| {
         while data.len() < expected {
             let remaining = expected - data.len();
-            let packets = remaining.div_ceil(62).min(32) as u16;
+            let packets = remaining.div_ceil(DATA_PACKET_PAYLOAD).min(32) as u16;
             let chunk = session.read(handle, packets)?;
             if chunk.is_empty() {
                 break;

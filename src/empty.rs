@@ -16,9 +16,10 @@
 
 use time::OffsetDateTime;
 
+use crate::architecture::tagged_list_bytes;
 use crate::error::Error;
 use crate::frame::{Layout, Piece, Placement};
-use crate::gspm::tagged_list_bytes;
+use crate::profile;
 use crate::sections::{
     acknowledging_entry, digit_entry_table, log_area, name_tree, parameter_groups,
     send_event_entries, send_event_lists, start_up_lists, start_up_table, state_records,
@@ -35,7 +36,11 @@ use crate::tables::{counted_table, in_compiler_order, number_sender_table};
 /// Harmony 300, allocates four. The choice is stated here rather than derived, because nothing in
 /// the container settles it.
 pub fn emit_empty(skin: u8, built_at: &OffsetDateTime) -> Result<Vec<u8>, Error> {
-    let group_count = infrared_groups(skin)?;
+    let group_count = profile::empty_ir_groups(skin).ok_or_else(|| {
+        Error::Validation(format!(
+            "skin {skin} is not supported; the empty configuration is built for skins 78, 79 and 104"
+        ))
+    })?;
     let mut layout = Layout::new(skin, built_at)?;
 
     // The key table, immediately after `LWJL`: the four send event entries and event 0xFF, stored in
@@ -102,18 +107,4 @@ pub fn emit_empty(skin: u8, built_at: &OffsetDateTime) -> Result<Vec<u8>, Error>
     layout.place(12, Placement::new(Vec::new(), digits))?;
 
     layout.lay_out()
-}
-
-/// How many infrared groups a skin's configurations allocate.
-///
-/// Skins 78 and 79 are the Harmony 300's two printings, with four groups; skin 104 is the Harmony
-/// 350, with eight. Any other skin is refused with the skins that are known, rather than guessed.
-fn infrared_groups(skin: u8) -> Result<usize, Error> {
-    match skin {
-        78 | 79 => Ok(4),
-        104 => Ok(8),
-        other => Err(Error::Validation(format!(
-            "skin {other} is not supported; the empty configuration is built for skins 78, 79 and 104"
-        ))),
-    }
 }

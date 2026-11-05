@@ -20,6 +20,11 @@ use crate::ir::{self, ImportedCommand, IrRecord};
 use crate::model::{self, Model};
 use crate::profile::ModelProfile;
 
+/// The model input schema, embedded so `compose --print-schema` needs no installed files.
+pub const MODEL_SCHEMA: &str = include_str!("../schema/model-v1.json");
+/// The resolved-model sidecar schema, embedded for `compose --print-resolved-schema`.
+pub const RESOLVED_SCHEMA: &str = include_str!("../schema/resolved-model-v1.json");
+
 pub fn run(
     clock: &dyn Clock,
     model_path: &Path,
@@ -28,8 +33,16 @@ pub fn run(
     json: bool,
     stdout: &mut dyn Write,
 ) -> Result<(), Error> {
+    let span = tracing::info_span!("compose", model = %model_path.display(), out = %out.display());
+    let _entered = span.enter();
+
     let model = model::load(model_path)?;
-    let profile = &crate::profile::HARMONY_300;
+    let profile = crate::profile::by_id(&model.profile).ok_or_else(|| {
+        Error::Validation(format!(
+            "model names unknown Model Profile '{}'",
+            model.profile
+        ))
+    })?;
     model::validate(&model, profile)?;
 
     let sidecar = sidecar_path(out);
@@ -55,6 +68,13 @@ pub fn run(
     let resolved = ResolvedModel::new(&model, profile, &imports, &composed);
     fs::write(out, &composed.bytes)?;
     fs::write(&sidecar, serde_json::to_vec_pretty(&resolved)?)?;
+    tracing::info!(
+        size = composed.bytes.len(),
+        devices = composed.devices.len(),
+        favourites = composed.favourites,
+        resolved_model = %sidecar.display(),
+        "composed Container"
+    );
 
     let digest = container::sha256_hex(&composed.bytes);
     if json {

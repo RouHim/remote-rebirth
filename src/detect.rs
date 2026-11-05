@@ -1,35 +1,43 @@
+//! `detect`: identify the connected Remote without writing.
+//!
+//! The Harmony 300 and 350 share product ID `0xC124`, so the family comes from the USB descriptor's
+//! `bcdDevice` and the identity from `/sys/sysinfo`. A single Logitech device that is not a Harmony
+//! is reported as unsupported rather than as no Remote; more than one Logitech device is an error,
+//! because the CLI never guesses which unit to open.
+
 use std::io::Write;
 
 use serde::Serialize;
 
 use crate::error::Error;
 use crate::profile::{self, ModelProfile};
+use crate::protocol::REPORT_BYTES;
 use crate::sysinfo::{self, SysInfo};
 use crate::transport::{RemoteBackend, RemoteDescriptor, RemoteSelector, RemoteSession, read_file};
 
-const HARMONY_VENDOR_ID: u16 = 0x046D;
+const LOGITECH_VENDOR_ID: u16 = 0x046D;
 const HARMONY_300_350_PRODUCT_ID: u16 = 0xC124;
 const HARMONY_200_PRODUCT_ID: u16 = 0xC125;
 
+/// A Remote whose identity has been read and whose session is still open.
 pub struct OpenedRemote {
     pub descriptor: RemoteDescriptor,
     pub sysinfo: SysInfo,
     pub session: Box<dyn RemoteSession>,
 }
 
-pub fn open_remote(backend: &mut dyn RemoteBackend) -> Result<OpenedRemote, Error> {
-    let devices: Vec<RemoteDescriptor> = backend
+/// The single Logitech device attached: either a Harmony we opened, or another Logitech product.
+pub enum Selected {
+    Harmony(OpenedRemote),
+    Other(RemoteDescriptor),
+}
+
+/// Select the single Logitech device and, when it is a Harmony, open it and read `/sys/sysinfo`.
+pub fn select(backend: &mut dyn RemoteBackend) -> Result<Selected, Error> {
+    let mut devices: Vec<RemoteDescriptor> = backend
         .list()?
         .into_iter()
-        .filter(|device| device.vendor_id == HARMONY_VENDOR_ID)
-        .filter(|device| {
-            device.product_id == HARMONY_300_350_PRODUCT_ID
-                || device.product_id == HARMONY_200_PRODUCT_ID
-                || device
-                    .product
-                    .as_deref()
-                    .is_some_and(|product| product.to_ascii_lowercase().contains("harmony"))
-        })
+        .filter(|device| device.vendor_id == LOGITECH_VENDOR_ID)
         .collect();
 
     match devices.len() {
@@ -38,39 +46,88 @@ pub fn open_remote(backend: &mut dyn RemoteBackend) -> Result<OpenedRemote, Erro
         )),
         1 => {
             let descriptor = devices
-                .into_iter()
-                .next()
-                .ok_or_else(|| Error::Device("no Harmony Remote found".into()))?;
-            let mut session = backend.open(&RemoteSelector {
-                bus: descriptor.bus,
-                address: descriptor.address,
-            })?;
-            let bytes = read_file(&mut *session, "/sys/sysinfo")?;
-            let sysinfo = sysinfo::parse(&bytes);
-            Ok(OpenedRemote {
-                descriptor,
-                sysinfo,
-                session,
-            })
+                .pop()
+                .ok_or_else(|| Error::Device("no Logitech device found".into()))?;
+            if is_harmony(&descriptor) {
+                open(backend, descriptor).map(Selected::Harmony)
+            } else {
+                Ok(Selected::Other(descriptor))
+            }
         }
         _ => {
             let list = devices
                 .iter()
                 .map(|device| {
                     format!(
-                        "bus {} address {} ({})",
+                        "bus {} address {} ({}, vendor 0x{:04X}, product 0x{:04X})",
                         device.bus,
                         device.address,
-                        device.product.as_deref().unwrap_or("unknown")
+                        device.product.as_deref().unwrap_or("unknown product"),
+                        device.vendor_id,
+                        device.product_id
                     )
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
             Err(Error::Device(format!(
-                "multiple Harmony Remotes found: {list}; disconnect all but one"
+                "multiple Logitech devices found: {list}; disconnect all but one"
             )))
         }
     }
+}
+
+/// Open the connected Harmony, refusing anything that is not one.
+pub fn open_remote(backend: &mut dyn RemoteBackend) -> Result<OpenedRemote, Error> {
+    match select(backend)? {
+        Selected::Harmony(opened) => Ok(opened),
+        Selected::Other(descriptor) => Err(Error::Device(format!(
+            "the connected Logitech device (vendor 0x{:04X}, product 0x{:04X}) is not a Harmony \
+             Remote; connect a Harmony 300 and retry",
+            descriptor.vendor_id, descriptor.product_id
+        ))),
+    }
+}
+
+fn is_harmony(descriptor: &RemoteDescriptor) -> bool {
+    descriptor.product_id == HARMONY_300_350_PRODUCT_ID
+        || descriptor.product_id == HARMONY_200_PRODUCT_ID
+        || descriptor
+            .product
+            .as_deref()
+            .is_some_and(|product| product.to_ascii_lowercase().contains("harmony"))
+}
+
+fn open(
+    backend: &mut dyn RemoteBackend,
+    descriptor: RemoteDescriptor,
+) -> Result<OpenedRemote, Error> {
+    let mut session = backend.open(&RemoteSelector {
+        bus: descriptor.bus,
+        address: descriptor.address,
+    })?;
+    let bytes = read_file(&mut *session, "/sys/sysinfo")?;
+    let sysinfo = sysinfo::parse(&bytes);
+    let packet_length = sysinfo.link_packet_length;
+    if packet_length != Some(REPORT_BYTES as u16) {
+        return Err(Error::Device(format!(
+            "the Remote reports link_packet_length {}, but this tool speaks {REPORT_BYTES}-byte \
+             reports; no Write will be performed",
+            packet_length.map_or_else(|| "missing".to_string(), |value| value.to_string())
+        )));
+    }
+    tracing::info!(
+        bus = descriptor.bus,
+        address = descriptor.address,
+        bcd_device = format_args!("0x{:04X}", descriptor.bcd_device),
+        family = profile::family(descriptor.bcd_device).unwrap_or("unknown"),
+        skin = ?sysinfo.skin,
+        "opened Remote"
+    );
+    Ok(OpenedRemote {
+        descriptor,
+        sysinfo,
+        session,
+    })
 }
 
 pub fn run(
@@ -78,7 +135,16 @@ pub fn run(
     json: bool,
     stdout: &mut dyn Write,
 ) -> Result<(), Error> {
-    let opened = open_remote(backend)?;
+    let span = tracing::info_span!("detect");
+    let _entered = span.enter();
+
+    match select(backend)? {
+        Selected::Other(descriptor) => report_other(&descriptor, json, stdout),
+        Selected::Harmony(opened) => report_harmony(&opened, json, stdout),
+    }
+}
+
+fn report_harmony(opened: &OpenedRemote, json: bool, stdout: &mut dyn Write) -> Result<(), Error> {
     let info = &opened.sysinfo;
     let profile: Option<&ModelProfile> = profile::for_identity(info.architecture, info.skin);
     let model = profile
@@ -86,12 +152,20 @@ pub fn run(
         .or_else(|| profile::recognized_model(info.architecture, info.skin))
         .unwrap_or("unknown Harmony Remote");
     let supported = profile.is_some();
+    let family = profile::family(opened.descriptor.bcd_device);
+    tracing::info!(
+        model,
+        supported,
+        profile = profile.map(|profile| profile.id).unwrap_or("none"),
+        "identified Remote"
+    );
 
     if json {
         let output = DetectOutput {
             schema_version: 1,
             supported,
             model,
+            family,
             profile: profile.map(|profile| profile.id),
             architecture: info.architecture,
             skin: info.skin,
@@ -112,6 +186,9 @@ pub fn run(
         "Supported: {}",
         if supported { "yes" } else { "no" }
     )?;
+    if let Some(family) = family {
+        writeln!(stdout, "Family: {family}")?;
+    }
     if let Some(architecture) = info.architecture {
         writeln!(stdout, "Architecture: {architecture}")?;
     }
@@ -130,6 +207,7 @@ pub fn run(
     if let Some(serial) = &info.serial {
         writeln!(stdout, "Serial: {serial}")?;
     }
+    write_usb(stdout, &opened.descriptor)?;
     if !supported {
         writeln!(
             stdout,
@@ -139,11 +217,66 @@ pub fn run(
     Ok(())
 }
 
+fn report_other(
+    descriptor: &RemoteDescriptor,
+    json: bool,
+    stdout: &mut dyn Write,
+) -> Result<(), Error> {
+    tracing::warn!(
+        vendor_id = format_args!("0x{:04X}", descriptor.vendor_id),
+        product_id = format_args!("0x{:04X}", descriptor.product_id),
+        "the connected Logitech device is not a Harmony Remote"
+    );
+    if json {
+        let output = DetectOutput {
+            schema_version: 1,
+            supported: false,
+            model: "unknown Logitech device",
+            family: None,
+            profile: None,
+            architecture: None,
+            skin: None,
+            firmware_version: None,
+            hardware_version: None,
+            guid: None,
+            serial: None,
+            usb: UsbIdentity::from(descriptor),
+        };
+        serde_json::to_writer_pretty(&mut *stdout, &output)?;
+        writeln!(stdout)?;
+        return Ok(());
+    }
+
+    writeln!(stdout, "Model: unknown Logitech device")?;
+    writeln!(stdout, "Supported: no")?;
+    write_usb(stdout, descriptor)?;
+    writeln!(
+        stdout,
+        "This Logitech device is not a Harmony Remote; connect a Harmony 300 and retry."
+    )?;
+    Ok(())
+}
+
+fn write_usb(stdout: &mut dyn Write, descriptor: &RemoteDescriptor) -> Result<(), Error> {
+    writeln!(
+        stdout,
+        "USB: vendor 0x{:04X} product 0x{:04X} bcdDevice 0x{:04X} ({}), bus {} address {}",
+        descriptor.vendor_id,
+        descriptor.product_id,
+        descriptor.bcd_device,
+        descriptor.product.as_deref().unwrap_or("unknown product"),
+        descriptor.bus,
+        descriptor.address
+    )?;
+    Ok(())
+}
+
 #[derive(Serialize)]
 struct DetectOutput<'a> {
     schema_version: u8,
     supported: bool,
     model: &'a str,
+    family: Option<&'static str>,
     profile: Option<&'static str>,
     architecture: Option<u8>,
     skin: Option<u8>,

@@ -20,15 +20,15 @@
 
 use time::OffsetDateTime;
 
+use crate::architecture::{
+    END_MARKER_LENGTH, FORMAT_WORD, POINTER_COUNT, SECTION_ITEM_SIZE, SECTION_TABLE_OFFSET,
+    TABLE_END_OFFSET, TRAILER_LENGTH, architecture_record, timestamp_section,
+};
 use crate::container::{
     FLASH_BASE, MAX_CONTAINER_SIZE, ValidationStatus, stored_checksum, trailer_checksum,
     validation_status,
 };
 use crate::error::Error;
-use crate::gspm::{
-    END_MARKER_LENGTH, FORMAT_WORD, POINTER_COUNT, SECTION_ITEM_SIZE, SECTION_TABLE_OFFSET,
-    TABLE_END_OFFSET, TRAILER_LENGTH, architecture_record, timestamp_section,
-};
 
 /// One address field inside a piece: either a target piece and an offset into it, or an absolute
 /// flash address the container does not own (base slot 2's log area names flash above the file).

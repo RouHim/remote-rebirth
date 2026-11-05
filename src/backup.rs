@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::Serialize;
 
@@ -8,8 +8,12 @@ use crate::clock::{Clock, format_rfc3339};
 use crate::container::{self, ValidationStatus};
 use crate::detect;
 use crate::error::Error;
+use crate::paths::sidecar_path;
 use crate::profile;
 use crate::transport::{RemoteBackend, read_file};
+
+/// The Backup sidecar schema, embedded so `backup --print-schema` needs no installed files.
+pub const SCHEMA: &str = include_str!("../schema/backup-v1.json");
 
 pub fn run(
     backend: &mut dyn RemoteBackend,
@@ -19,6 +23,9 @@ pub fn run(
     json: bool,
     stdout: &mut dyn Write,
 ) -> Result<(), Error> {
+    let span = tracing::info_span!("backup", out = %out.display());
+    let _entered = span.enter();
+
     let mut opened = detect::open_remote(backend)?;
     let architecture = opened.sysinfo.architecture;
     let skin = opened.sysinfo.skin;
@@ -31,11 +38,20 @@ pub fn run(
             "Backup supports Architecture 16 only; the connected Remote reports architecture {architecture:?}"
         )));
     }
-    if out.exists() && !overwrite {
-        return Err(Error::Validation(format!(
-            "{} already exists; pass --overwrite to replace it",
-            out.display()
-        )));
+    let sidecar_file = sidecar_path(out);
+    if !overwrite {
+        let mut existing = Vec::new();
+        for path in [out, sidecar_file.as_path()] {
+            if path.exists() {
+                existing.push(path.display().to_string());
+            }
+        }
+        if !existing.is_empty() {
+            return Err(Error::Validation(format!(
+                "{} already exists; pass --overwrite to replace it",
+                existing.join(" and ")
+            )));
+        }
     }
 
     let read = read_file(&mut *opened.session, "/cfg/usercfg")?;
@@ -49,7 +65,6 @@ pub fn run(
     let validation = container::validation_status(&container);
     let digest = container::sha256_hex(&container);
     let timestamp = format_rfc3339(&clock.now())?;
-    let sidecar_path = sidecar_path(out);
 
     fs::write(out, &container)?;
 
@@ -71,13 +86,20 @@ pub fn run(
         timestamp,
         validation,
     };
-    fs::write(&sidecar_path, serde_json::to_vec_pretty(&sidecar)?)?;
+    fs::write(&sidecar_file, serde_json::to_vec_pretty(&sidecar)?)?;
+    tracing::info!(
+        size = container.len(),
+        validation = validation.as_str(),
+        sha256 = %digest,
+        sidecar = %sidecar_file.display(),
+        "wrote Backup"
+    );
 
     if json {
         let output = BackupOutput {
             schema_version: 1,
             backup: out.display().to_string(),
-            sidecar: sidecar_path.display().to_string(),
+            sidecar: sidecar_file.display().to_string(),
             size: container.len() as u64,
             sha256: digest,
             validation,
@@ -94,7 +116,7 @@ pub fn run(
         container.len(),
         digest
     )?;
-    writeln!(stdout, "Wrote sidecar {}", sidecar_path.display())?;
+    writeln!(stdout, "Wrote sidecar {}", sidecar_file.display())?;
     if validation != ValidationStatus::Ok {
         writeln!(
             stdout,
@@ -103,12 +125,6 @@ pub fn run(
         )?;
     }
     Ok(())
-}
-
-fn sidecar_path(out: &Path) -> PathBuf {
-    let mut name = out.as_os_str().to_os_string();
-    name.push(".json");
-    PathBuf::from(name)
 }
 
 fn model_name(architecture: Option<u8>, skin: Option<u8>) -> String {

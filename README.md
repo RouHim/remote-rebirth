@@ -32,14 +32,19 @@ Harmony 300/350 USB identity (`046d:c124`).
 
 ```sh
 remote-rebirth detect [--json]
-remote-rebirth backup --out <path> [--overwrite] [--json]
+remote-rebirth backup --out <path> [--overwrite] [--json] [--print-schema]
 remote-rebirth inspect --file <path> [--json] [--print-schema]
 remote-rebirth compose --model <model.json> --out <container.bin> [--overwrite] [--json]
+                        [--print-schema] [--print-resolved-schema]
 remote-rebirth write --container <path> --backup <path> [--commit] [--no-reboot] [--json]
 remote-rebirth restore --backup <path> [--commit] [--no-reboot] [--json]
 ```
 
 `write` and `restore` default to a Dry Run. Only `--commit` opens `/cfg/usercfg` for writing.
+
+`--print-schema` prints the embedded JSON Schema for that command's data without requiring its
+other inputs: `backup` prints the Backup sidecar schema, `compose` prints the model schema, and
+`compose --print-resolved-schema` prints the resolved-model sidecar schema.
 
 ## Safety model
 
@@ -47,6 +52,9 @@ remote-rebirth restore --backup <path> [--commit] [--no-reboot] [--json]
   timestamp, and validation status. It refuses to overwrite unless `--overwrite` is given.
 - `write --commit` requires a verified Backup whose model and Skin match the connected Remote, and
   verifies that the Remote's current Configuration equals that Backup or is empty.
+- `restore --commit` refuses a Backup whose sidecar validation is not `ok`; this is stricter than the
+  literal specification, deliberately, so a damaged capture is never replayed over a working
+  Configuration.
 - The committed Write follows the file protocol: filesystem reset, open for writing, chunks of at most
   50 data packets, checksum check, flush only on `m`, close, Read-Back, reboot.
 - A Read-Back mismatch exits non-zero, skips the reboot, and names the Backup and the

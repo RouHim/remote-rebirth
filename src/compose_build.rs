@@ -15,10 +15,10 @@
 
 use time::OffsetDateTime;
 
+use crate::architecture::{Instruction, TaggedEntry, action_list_bytes, tagged_list_bytes};
 use crate::container::{FLASH_BASE, ValidationStatus, validation_status};
 use crate::error::Error;
 use crate::frame::{Layout, Piece, Placement, Reference};
-use crate::gspm::{Instruction, TaggedEntry, action_list_bytes, tagged_list_bytes};
 use crate::ir::{ImportedCommand, IrRecord};
 use crate::model::{Activity, Model};
 use crate::profile::{self, ModelProfile};
@@ -49,8 +49,6 @@ const PRESS: u8 = 0x80;
 const WATCH_TV_TAG: u8 = PRESS | 0x06;
 /// The timers a send list cancels.
 const CANCEL_TIMERS: u16 = 0xFFFB;
-/// The scan code of each Device Key place: top left, top right, bottom left, bottom right.
-const DEVICE_KEY_SCANS: [u8; 4] = [5, 1, 7, 4];
 /// A send's quantity, in tenths: one, the reference's default for an ordinary command.
 const DEVICE_QUANTITY: u8 = 1;
 /// The number sender's record length.
@@ -117,7 +115,7 @@ pub fn build(
         let place = usize::from(model.devices[device].device_key)
             .checked_sub(1)
             .ok_or_else(|| Error::Validation("a Device Key is place 0".into()))?;
-        if place >= DEVICE_KEY_SCANS.len() || place >= group_count {
+        if place >= profile.device_key_scans.len() || place >= group_count {
             return Err(Error::Validation(format!(
                 "Device '{}' uses Device Key {}, and profile '{}' has {group_count} infrared groups",
                 model.devices[device].name, model.devices[device].device_key, profile.id
@@ -243,7 +241,7 @@ pub fn build(
     for &device in &order {
         let place = usize::from(group_of[device]);
         key_entries.push(TaggedEntry {
-            tag: PRESS | DEVICE_KEY_SCANS[place],
+            tag: PRESS | profile.device_key_scans[place],
             operand: SELECT_MAP_MASK | u16::from(map_of[device]),
             opcode: SELECT_MAP,
         });
