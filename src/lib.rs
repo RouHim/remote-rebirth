@@ -9,6 +9,7 @@ mod error;
 mod fake;
 mod frame;
 mod gspm;
+mod model;
 mod paths;
 mod profile;
 mod protocol;
