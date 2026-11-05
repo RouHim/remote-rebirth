@@ -6,7 +6,9 @@ use clap::{Parser, Subcommand};
 use crate::backup;
 use crate::detect;
 use crate::error::{Error, Exit};
+use crate::restore;
 use crate::runtime::Runtime;
+use crate::write;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -99,7 +101,7 @@ fn dispatch(command: Command, runtime: &mut Runtime<'_>) -> Result<(), Error> {
         clock,
         stdout,
         stderr: _,
-        state_dir: _,
+        state_dir,
     } = runtime;
 
     match command {
@@ -122,7 +124,37 @@ fn dispatch(command: Command, runtime: &mut Runtime<'_>) -> Result<(), Error> {
             print_schema,
         } => crate::inspect::run(file.as_deref(), json, print_schema, &mut **stdout),
         Command::Compose { .. } => Err(Error::Internal("compose is not implemented yet".into())),
-        Command::Write { .. } => Err(Error::Internal("write is not implemented yet".into())),
-        Command::Restore { .. } => Err(Error::Internal("restore is not implemented yet".into())),
+        Command::Write {
+            container,
+            backup,
+            commit,
+            no_reboot,
+            json,
+        } => write::run(
+            &mut **backend,
+            &**clock,
+            state_dir,
+            &container,
+            &backup,
+            commit,
+            no_reboot,
+            json,
+            &mut **stdout,
+        ),
+        Command::Restore {
+            backup,
+            commit,
+            no_reboot,
+            json,
+        } => restore::run(
+            &mut **backend,
+            &**clock,
+            state_dir,
+            &backup,
+            commit,
+            no_reboot,
+            json,
+            &mut **stdout,
+        ),
     }
 }

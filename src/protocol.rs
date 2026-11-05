@@ -9,6 +9,26 @@ pub const SEQUENCE_MODULUS: u8 = 64;
 pub const DONE_PACKET: u8 = 0x7E;
 pub const CHUNK_REPLY_FLAG: u8 = 0x80;
 
+/// The request sequence counter shared by every file-protocol exchange.
+///
+/// It runs `0..64` and wraps; the done packet consumes no sequence number.
+#[derive(Debug, Default)]
+pub struct Sequence {
+    next: u8,
+}
+
+impl Sequence {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn take(&mut self) -> u8 {
+        let value = self.next % SEQUENCE_MODULUS;
+        self.next = (value + 1) % SEQUENCE_MODULUS;
+        value
+    }
+}
+
 pub enum Param<'a> {
     String(&'a str),
     Byte(u8),

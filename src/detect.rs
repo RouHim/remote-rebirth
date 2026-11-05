@@ -5,9 +5,7 @@ use serde::Serialize;
 use crate::error::Error;
 use crate::profile::{self, ModelProfile};
 use crate::sysinfo::{self, SysInfo};
-use crate::transport::{
-    RemoteBackend, RemoteDescriptor, RemoteSelector, RemoteSession, read_file,
-};
+use crate::transport::{RemoteBackend, RemoteDescriptor, RemoteSelector, RemoteSession, read_file};
 
 const HARMONY_VENDOR_ID: u16 = 0x046D;
 const HARMONY_300_350_PRODUCT_ID: u16 = 0xC124;
@@ -109,7 +107,11 @@ pub fn run(
     }
 
     writeln!(stdout, "Model: {model}")?;
-    writeln!(stdout, "Supported: {}", if supported { "yes" } else { "no" })?;
+    writeln!(
+        stdout,
+        "Supported: {}",
+        if supported { "yes" } else { "no" }
+    )?;
     if let Some(architecture) = info.architecture {
         writeln!(stdout, "Architecture: {architecture}")?;
     }
