@@ -107,6 +107,18 @@ pub fn start_up_table() -> Result<Piece, Error> {
 /// empty configuration has no device whose map could be selected; the reference documents this as
 /// the least a start-up can do.
 pub fn start_up_lists() -> Result<Vec<Piece>, Error> {
+    start_up_lists_with(None)
+}
+
+/// The start-up's six lists with the key map event 1's list selects last, as the reference's
+/// `noScreenStartUpLists` writes it: the map of the device on the lowest occupied infrared group.
+/// The empty configuration states none and its four event lists stay identical.
+pub fn start_up_lists_with(map: Option<u8>) -> Result<Vec<Piece>, Error> {
+    let mut first = vec![call(START_UP_HOLD), call(START_UP_EMPTY)];
+    if let Some(map) = map {
+        first.push(Instruction::new(0x1F, 0xFF00 | u16::from(map)));
+    }
+    let first = action_list_bytes(&first)?;
     let event = action_list_bytes(&[call(START_UP_HOLD), call(START_UP_EMPTY)])?;
     let hold = action_list_bytes(&[
         Instruction::new(0x3F, 0xF000 | HOLD_TIME),
@@ -115,7 +127,7 @@ pub fn start_up_lists() -> Result<Vec<Piece>, Error> {
     ])?;
     let empty = action_list_bytes(&[])?;
     Ok(vec![
-        Piece::new(event.clone(), "slot-10-list"),
+        Piece::new(first, "slot-10-list"),
         Piece::new(event.clone(), "slot-10-list"),
         Piece::new(event.clone(), "slot-10-list"),
         Piece::new(event, "slot-10-list"),

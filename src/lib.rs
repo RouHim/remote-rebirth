@@ -1,6 +1,10 @@
 mod backup;
 mod cli;
 mod clock;
+mod compose;
+mod compose_build;
+#[cfg(test)]
+mod compose_tests;
 mod container;
 mod detect;
 mod empty;
@@ -18,7 +22,6 @@ pub mod ir;
 #[cfg(test)]
 mod ir_tests;
 mod journal;
-#[allow(dead_code)] // the compose slice consumes this module
 mod model;
 mod paths;
 mod profile;
