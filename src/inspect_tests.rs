@@ -459,5 +459,7 @@ fn inspect_json_validates_against_the_published_schema() {
     let schema: Value =
         serde_json::from_str(include_str!("../schema/inspect-v1.json")).expect("schema");
     let validator = jsonschema::validator_for(&schema).expect("compile schema");
-    validator.validate(&value).expect("inspect output validates");
+    validator
+        .validate(&value)
+        .expect("inspect output validates");
 }
