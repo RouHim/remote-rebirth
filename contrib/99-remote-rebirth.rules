@@ -1,0 +1,3 @@
+# Logitech Harmony 300/350 USB identity
+# Grants the active seat user access to the Remote without root.
+SUBSYSTEM=="usb", ATTR{idVendor}=="046d", ATTR{idProduct}=="c124", MODE="0660", TAG+="uaccess"

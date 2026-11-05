@@ -6,6 +6,7 @@ mod detect;
 mod error;
 #[cfg(test)]
 mod fake;
+mod model;
 mod paths;
 mod profile;
 mod protocol;
