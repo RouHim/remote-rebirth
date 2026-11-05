@@ -152,11 +152,11 @@ pub fn send_event_lists() -> Result<Vec<Piece>, Error> {
                     CONDITION_TWO_ARMS | (SEND_EVENT_COMPARISON << 8) | SENDING_FLAG,
                 ),
                 Instruction::new(
-                    PIN_BAND,
+                    STATE_BAND,
                     (u16::from(PIN_BAND) << 8) | (u16::from(*pin) << 4) | 2,
                 ),
                 Instruction::new(
-                    PIN_BAND,
+                    STATE_BAND,
                     (u16::from(PIN_BAND) << 8) | (u16::from(*pin) << 4),
                 ),
             ])?,
