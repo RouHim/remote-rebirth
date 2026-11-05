@@ -3,6 +3,7 @@ use sha2::{Digest, Sha256};
 
 use crate::error::Error;
 
+#[allow(dead_code)]
 pub const FLASH_BASE: u32 = 0x020000;
 pub const MAX_CONTAINER_SIZE: usize = 256 * 1024;
 pub const HEADER_MIN_LEN: usize = 0x4B;
@@ -48,8 +49,8 @@ pub fn trailer_checksum(bytes: &[u8]) -> Result<u16, Error> {
         ));
     }
     let mut accumulator = 0x4321u16;
-    for word in bytes[..bytes.len() - 6].chunks_exact(2) {
-        accumulator ^= u16::from_le_bytes([word[0], word[1]]);
+    for word in bytes[..bytes.len() - 6].as_chunks::<2>().0 {
+        accumulator ^= u16::from_le_bytes(*word);
     }
     Ok(accumulator)
 }

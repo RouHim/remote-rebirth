@@ -7,18 +7,22 @@ mod empty;
 mod error;
 #[cfg(test)]
 mod fake;
+mod filewriter;
 mod frame;
 mod gspm;
+mod journal;
 mod model;
 mod paths;
 mod profile;
 mod protocol;
+mod restore;
 mod runtime;
 mod sections;
 mod sysinfo;
 mod tables;
 mod transport;
 mod usb;
+mod write;
 
 #[cfg(test)]
 mod empty_tests;

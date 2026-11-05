@@ -242,9 +242,7 @@ pub fn validate(model: &Model, profile: &ModelProfile) -> Result<(), Error> {
         })?;
     let _ = channel_device;
     if model.activity.steps.is_empty() {
-        return Err(Error::Validation(
-            "Watch TV Activity has no steps".into(),
-        ));
+        return Err(Error::Validation("Watch TV Activity has no steps".into()));
     }
     for step in &model.activity.steps {
         let device = model
@@ -263,7 +261,10 @@ pub fn validate(model: &Model, profile: &ModelProfile) -> Result<(), Error> {
                 step.device
             )));
         }
-        for command_name in [step.power.as_ref(), step.input.as_ref()].into_iter().flatten() {
+        for command_name in [step.power.as_ref(), step.input.as_ref()]
+            .into_iter()
+            .flatten()
+        {
             if !device.commands.contains_key(command_name) {
                 return Err(Error::Validation(format!(
                     "Watch TV Activity step for Device '{}' names missing Command '{command_name}'",
@@ -330,9 +331,7 @@ fn validate_source(device: &str, command: &str, source: &IrSource) -> Result<(),
             if let Some(hex) = &source.hex
                 && hex.trim().is_empty()
             {
-                return Err(Error::Validation(format!(
-                    "{context} has empty Pronto hex"
-                )));
+                return Err(Error::Validation(format!("{context} has empty Pronto hex")));
             }
         }
         "lirc" => {
