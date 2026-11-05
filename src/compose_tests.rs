@@ -248,7 +248,7 @@ fn inspect_reports_the_composed_devices_keys_activity_and_favourites() {
     assert!(
         key_table
             .iter()
-            .any(|entry| entry["tag"].as_u64() == Some(0x06)
+            .any(|entry| entry["tag"].as_u64() == Some(0x86)
                 && entry["opcode"].as_u64() == Some(0x7F)),
         "Watch TV calls its activity list"
     );

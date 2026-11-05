@@ -1046,7 +1046,7 @@ fn derive_watch_tv(
         .unwrap_or(key_table.entries.as_slice());
     let Some(entry) = entries
         .iter()
-        .find(|entry| entry.tag == 0x06 && entry.opcode == 0x7F)
+        .find(|entry| matches!(entry.tag, 0x06 | 0x86) && entry.opcode == 0x7F)
     else {
         return Ok(None);
     };

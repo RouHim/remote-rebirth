@@ -46,7 +46,7 @@ const NUMBER_SENDER_BAND: u16 = 0xF300;
 const PRESS: u8 = 0x80;
 /// The key table's Watch TV tag: scan 6 with no event bits, the tag `inspect` reads an activity's
 /// binding by.
-const WATCH_TV_TAG: u8 = 0x06;
+const WATCH_TV_TAG: u8 = PRESS | 0x06;
 /// The timers a send list cancels.
 const CANCEL_TIMERS: u16 = 0xFFFB;
 /// The scan code of each Device Key place: top left, top right, bottom left, bottom right.
