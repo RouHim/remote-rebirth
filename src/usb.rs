@@ -70,7 +70,11 @@ impl RemoteBackend for NusbBackend {
         let device = info
             .open()
             .wait()
-            .map_err(|error| Error::Device(format!("cannot open Remote: {error}")))?;
+            .map_err(|error| {
+            Error::Device(format!(
+                "cannot open Remote: {error}; install contrib/99-remote-rebirth.rules or grant USB access"
+            ))
+        })?;
         let configuration = device
             .active_configuration()
             .map_err(|error| Error::Device(format!("cannot read USB configuration: {error}")))?;

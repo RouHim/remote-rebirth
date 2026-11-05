@@ -126,13 +126,13 @@ v1 targets Architecture 16, the Harmony 300 Model Profile, skins 78 and 79, firm
 ### CLI contract
 
 - `detect [--json]`
-- `backup --out <path> [--overwrite] [--json]`
+- `backup --out <path> [--overwrite] [--json] [--print-schema]`
 - `inspect --file <path> [--json] [--print-schema]`
-- `compose --model <model.json> --out <container.bin> [--overwrite] [--json]`
+- `compose --model <model.json> --out <container.bin> [--overwrite] [--json] [--print-schema] [--print-resolved-schema]`
 - `write --container <path> --backup <path> [--commit] [--no-reboot] [--json]`
 - `restore --backup <path> [--commit] [--no-reboot] [--json]`
 - `write` and `restore` default to a Dry Run; `--commit` is required to open `/cfg/usercfg` for writing.
-- `inspect --print-schema` prints the relevant schema and exits without requiring a file.
+- `inspect --print-schema`, `backup --print-schema`, and `compose --print-schema` print their input/output schemas; `compose --print-resolved-schema` prints the resolved-model schema. They exit without requiring a file.
 - `compose` and `backup` refuse to replace an existing output or sidecar unless `--overwrite` is supplied.
 
 ### Exit codes
@@ -153,15 +153,16 @@ JSON goes to stdout; progress and diagnostics go to stderr. Every documented cod
 
 - Backup: the Container file plus `<backup-path>.json`, with `schema_version`, `file`, `model`, `skin`, `architecture`, `firmware_version`, `guid`, `serial`, `size`, `sha256`, `timestamp`, and `validation` (`ok`, `checksum_mismatch`, or `unreadable`).
 - Compose: the Container plus `<container-path>.model.json`, the resolved model. Each Command records its IR Source format, resolved path, selector, source SHA-256, chosen protocol, `sends`, and a compact IR Record summary.
-- Schemas: hand-written JSON Schema files for the model, inspect output, and Backup sidecar, embedded with `include_str!` and exposed by `--print-schema`.
+- Schemas: hand-written JSON Schema files for the model, inspect output, Backup sidecar, and resolved model, embedded with `include_str!` and exposed by the `--print-schema`/`--print-resolved-schema` flags.
 - Journal: append-only JSONL at `$XDG_STATE_HOME/remote-rebirth/journal.jsonl`, falling back to `$HOME/.local/state/remote-rebirth/journal.jsonl`. Each record carries operation id, UTC timestamp, command, step, offset, byte count, reply status, Backup path, and Backup digest. Only committed `write` and `restore` operations journal.
 
 ### Detection
 
 - Enumerate USB devices with vendor ID `0x046D`.
-- The Harmony 300 and 350 share product ID `0xC124`. Resolve the family from `bcdDevice` (`0x1078` for the 300 family, `0x1104` for the 350 family), then read `/sys/sysinfo` for architecture, Skin, firmware version, hardware version, GUID, and serial number.
+- The Harmony 300 and 350 share product ID `0xC124`. Resolve the family from `bcdDevice` (`0x1078` for the 300 family, `0x1104` for the 350 family), then read `/sys/sysinfo` for architecture, Skin, firmware version, hardware version, GUID, and serial number. Detect reports the family as well as the sysinfo identity.
 - The Harmony 300 Model Profile is enabled for Architecture 16, skins 78 and 79, firmware 1.4.
-- The Harmony 350 (Skin 104) is recognised and refused for all Writes. The Harmony 200 (`0xC125`) is recognised as unsupported. Other Logitech devices are reported by vendor and product ID as unsupported.
+- The Harmony 350 (Skin 104) is recognised and refused for all Writes. The Harmony 200 (`0xC125`) is recognised as unsupported. A single non-Harmony Logitech device is reported by vendor and product ID as unsupported; when a Harmony and another Logitech device are both attached, the Harmony is selected.
+- The Remote must report `link_packet_length = 64`; any other value is refused before a Write.
 - Detect opens read-only, reads `/sys/sysinfo`, and closes. It never writes.
 - Multiple matching Remotes are an error listing their identities; the CLI does not choose one.
 - No Remote is exit code 3 with a message naming the missing device.
@@ -183,7 +184,7 @@ JSON goes to stdout; progress and diagnostics go to stderr. Every documented cod
 - Requests use the file protocol header, big-endian parameters, and a sequence counter that runs 0–63 and wraps. Data packets carry up to 62 bytes; a chunk carries at most 50 data packets and ends with the `0x7E` done packet. The done packet consumes no sequence number.
 - Committed Write order: reset the filesystem, open `/cfg/usercfg` for writing, write chunks, request the checksum check, flush only when the reply is `m`, close, Read-Back, reboot unless `--no-reboot`.
 - Open for writing erases the configuration region before replying. All preconditions and the Journal's prepare record must complete before the reset or open is sent.
-- Preconditions: the Container parses and its checksum matches; the Backup exists and its sidecar matches; the Backup and Container model and Skin match the connected Remote; the Remote's current Configuration equals the Backup or is empty.
+- Preconditions: the Container parses as Architecture 16 with a present architecture record and valid checksum; its Skin matches the connected Remote; its Device count, IR-group count, and Favourite count fit the active Model Profile; the Backup exists and its sidecar matches; the Backup and Container model and Skin match the connected Remote; the Remote's current Configuration equals the Backup or is empty. Restore applies the same Container/Skin/profile checks and also refuses a sidecar whose validation is not `ok`, a deliberate safety extension.
 - The checksum check uses type `XOR`, seed `0x4321`, offset 0, length `len−6`, and the Container's stored checksum word. A reply other than `m` prevents the flush and reports that the Remote may be erased.
 - Read: the open reply carries the handle and the size; the first read report may repeat the request header; data packets carry sequence, size, and payload; the transfer ends on `0xFE`; the result is cut to the stated size. A short read is an error.
 - A malformed packet poisons the session. Close the handle, reopen a fresh session, Journal the failure, and report. Do not retry the Write automatically.
@@ -265,8 +266,8 @@ JSON goes to stdout; progress and diagnostics go to stderr. Every documented cod
 - Pure codec tests cover Container parse/emit round-trips, malformed frames, pointer and slot bounds, checksum, the 256 KiB limit, IR import, protocol encoders, press counts, toggle groups, and Model Profile limits.
 - Golden Container fixtures are authored from the reference codec's documented empty Configuration and from this project's own Compose output. No Logitech catalogue data is used.
 - Protocol-sequence tests assert chunk sizes, the 0–63 sequence wrap, the done packet, check parameters, flush only on `m`, close, Read-Back, reboot, and Journal records.
-- Schema tests validate inspect and resolved-model output with `jsonschema` against the embedded schemas.
-- CLI smoke tests cover `--help`, `--version`, a usage error, and `--print-schema`.
+- Schema tests validate the model input, inspect output, Backup sidecar, and resolved-model output with `jsonschema` against the embedded schemas.
+- CLI smoke tests cover `--help` and `--version` (exit 0, stdout), a usage error (exit 2, stderr), the `--print-schema` flags, and the exit-code taxonomy 1–6.
 - Tests follow TDD/BDD: write the failing behavior first, name tests by scenario, action, and expected outcome, and keep them deterministic and isolated.
 - The hardware gate is a manual checklist on the connected Harmony 300: detect identity, backup, inspect, compose, write dry run, write commit, Read-Back, restore, power-cycle, and IR bench verification. It is not part of CI.
 
@@ -296,5 +297,5 @@ JSON goes to stdout; progress and diagnostics go to stderr. Every documented cod
 - Open for writing erases the configuration region before replying. A timeout there leaves the Remote erased; the Journal must record the prepare step before the reset.
 - The reference also records a session-poisoning malformed packet and a 63-byte report wedge in hidapi. The chosen `nusb` transport avoids the report-ID trap; the fake Remote covers the poisoning behavior.
 - The Harmony 300 and 350 share product ID `0xC124`; `bcdDevice` and `/sys/sysinfo` resolve the model and Skin. The Harmony 300's `bcdDevice` is `0x1078` even on Skin 79 units.
-- A connected Harmony 300 is available on the development machine (`046D:C124`, `bcdDevice 0x1078`), so the read-only commands and the physical gate can run immediately.
+- A connected Harmony 300 is available on the development machine (`046D:C124`, `bcdDevice 0x1078`). Opening it requires the documented udev rule; until the rule is installed, `detect` exits 3 with a permission error and the hardware gate remains pending.
 - Local tracker: this spec is `.scratch/remote-rebirth/spec.md`. No tickets have been created yet.
