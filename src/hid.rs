@@ -1,0 +1,122 @@
+//! The hidraw transport: the kernel HID driver owns the interface and hidapi moves 64-byte reports.
+//!
+//! This replaces the raw nusb/libusb path after it timed out on a Harmony 300: the unit accepts
+//! reports through the kernel HID driver, which also performs the HID class setup. hidapi wants a
+//! leading report-id byte of zero on a write; the reference measured that byte as not part of the
+//! protocol, so it is stripped by hidapi and never reaches the Remote.
+
+use hidapi::{HidApi, HidDevice};
+
+use crate::error::Error;
+use crate::protocol::{FileProtocol, REPORT_BYTES, ReportLink};
+use crate::transport::{RemoteBackend, RemoteDescriptor, RemoteSelector, RemoteSession};
+
+const READ_TIMEOUT_MS: i32 = 5_000;
+
+pub struct HidBackend;
+
+impl HidBackend {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for HidBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RemoteBackend for HidBackend {
+    fn list(&mut self) -> Result<Vec<RemoteDescriptor>, Error> {
+        let api = HidApi::new()
+            .map_err(|error| Error::Device(format!("HID enumeration failed: {error}")))?;
+        let mut descriptors = Vec::new();
+        for (index, info) in api.device_list().enumerate() {
+            descriptors.push(RemoteDescriptor {
+                bus: 0,
+                address: u8::try_from(index + 1).unwrap_or(u8::MAX),
+                vendor_id: info.vendor_id(),
+                product_id: info.product_id(),
+                bcd_device: info.release_number(),
+                product: info.product_string().map(str::to_owned),
+                serial: info.serial_number().map(str::to_owned),
+                path: Some(info.path().to_string_lossy().into_owned()),
+            });
+        }
+        Ok(descriptors)
+    }
+
+    fn open(&mut self, selector: &RemoteSelector) -> Result<Box<dyn RemoteSession>, Error> {
+        let api = HidApi::new()
+            .map_err(|error| Error::Device(format!("HID enumeration failed: {error}")))?;
+        let info = api
+            .device_list()
+            .find(|info| {
+                selector
+                    .path
+                    .as_deref()
+                    .is_some_and(|path| info.path().to_string_lossy().as_ref() == path)
+            })
+            .ok_or_else(|| {
+                Error::Device(format!(
+                    "the HID device at bus {} address {} is no longer connected",
+                    selector.bus, selector.address
+                ))
+            })?;
+        let device = info
+            .open_device(&api)
+            .map_err(|error| Error::Device(format!("cannot open HID device: {error}")))?;
+        Ok(Box::new(FileProtocol::new(HidLink { device })))
+    }
+}
+
+struct HidLink {
+    device: HidDevice,
+}
+
+impl ReportLink for HidLink {
+    fn send_report(&mut self, report: &[u8; REPORT_BYTES]) -> Result<(), Error> {
+        let mut buffer = [0u8; REPORT_BYTES + 1];
+        buffer[1..].copy_from_slice(report);
+        let written = self
+            .device
+            .write(&buffer)
+            .map_err(|error| Error::Protocol(format!("HID write failed: {error}")))?;
+        if written != REPORT_BYTES && written != REPORT_BYTES + 1 {
+            return Err(Error::Protocol(format!(
+                "HID write returned {written} bytes, expected {} or {}",
+                REPORT_BYTES,
+                REPORT_BYTES + 1
+            )));
+        }
+        Ok(())
+    }
+
+    fn receive_report(&mut self) -> Result<[u8; REPORT_BYTES], Error> {
+        let mut buffer = [0u8; REPORT_BYTES + 1];
+        let read = self
+            .device
+            .read_timeout(&mut buffer, READ_TIMEOUT_MS)
+            .map_err(|error| Error::Protocol(format!("HID read failed: {error}")))?;
+        match read {
+            0 => Err(Error::Protocol(format!(
+                "no reply from Remote within {READ_TIMEOUT_MS} ms"
+            ))),
+            REPORT_BYTES => {
+                let mut report = [0u8; REPORT_BYTES];
+                report.copy_from_slice(&buffer[..REPORT_BYTES]);
+                Ok(report)
+            }
+            n if n == REPORT_BYTES + 1 => {
+                let mut report = [0u8; REPORT_BYTES];
+                report.copy_from_slice(&buffer[1..]);
+                Ok(report)
+            }
+            n => Err(Error::Protocol(format!(
+                "HID read returned {n} bytes, expected {REPORT_BYTES} or {}",
+                REPORT_BYTES + 1
+            ))),
+        }
+    }
+}

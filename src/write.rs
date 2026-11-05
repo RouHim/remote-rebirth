@@ -152,6 +152,7 @@ fn recover(
     let selector = RemoteSelector {
         bus: descriptor.bus,
         address: descriptor.address,
+        path: descriptor.path.clone(),
     };
     let outcome = match backend.open(&selector) {
         Ok(mut fresh) => match read_file(&mut *fresh, "/sys/sysinfo") {

@@ -12,6 +12,7 @@ mod error;
 mod fake;
 mod filewriter;
 mod frame;
+mod hid;
 mod inspect;
 mod inspect_container;
 pub mod ir;
@@ -32,7 +33,6 @@ mod sections;
 mod sysinfo;
 mod tables;
 mod transport;
-mod usb;
 mod write;
 
 #[cfg(test)]
@@ -54,7 +54,7 @@ pub use cli::run;
 pub use clock::{Clock, SystemClock};
 pub use empty::emit_empty;
 pub use error::{Error, Exit};
+pub use hid::HidBackend;
 pub use paths::state_dir;
 pub use runtime::Runtime;
 pub use transport::{OpenRead, RemoteBackend, RemoteDescriptor, RemoteSelector, RemoteSession};
-pub use usb::NusbBackend;

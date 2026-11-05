@@ -1,3 +1,7 @@
 # Logitech Harmony 300/350 USB identity
-# Grants the active seat user access to the Remote without root.
-SUBSYSTEM=="usb", ATTR{idVendor}=="046d", ATTR{idProduct}=="c124", MODE="0660", TAG+="uaccess"
+# Gives the wheel group read/write access to the Remote without root. This works
+# for local seats and for headless/SSH sessions; replace wheel with your group.
+SUBSYSTEM=="usb", ATTR{idVendor}=="046d", ATTR{idProduct}=="c124", MODE="0660", GROUP="wheel"
+
+# The hidraw node, if the transport uses the kernel HID driver.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c124", MODE="0660", GROUP="wheel"

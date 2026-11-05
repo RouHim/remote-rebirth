@@ -34,6 +34,7 @@ fn descriptor(
         bcd_device,
         product: Some(product.to_string()),
         serial: None,
+        path: None,
     }
 }
 

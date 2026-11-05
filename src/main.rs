@@ -8,7 +8,7 @@ fn main() {
         .init();
 
     let args: Vec<OsString> = std::env::args_os().collect();
-    let mut backend = remote_rebirth::NusbBackend::new();
+    let mut backend = remote_rebirth::HidBackend::new();
     let clock = remote_rebirth::SystemClock;
     let state_dir = remote_rebirth::state_dir();
     let mut stdout = io::stdout().lock();

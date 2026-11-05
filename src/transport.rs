@@ -10,12 +10,15 @@ pub struct RemoteDescriptor {
     pub bcd_device: u16,
     pub product: Option<String>,
     pub serial: Option<String>,
+    /// The HID path, when the backend enumerates through hidraw.
+    pub path: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteSelector {
     pub bus: u8,
     pub address: u8,
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -30,6 +33,7 @@ pub trait RemoteBackend {
 }
 
 pub trait RemoteSession {
+    fn ping(&mut self) -> Result<(), Error>;
     fn reset_filesystem(&mut self) -> Result<(), Error>;
     fn open_read(&mut self, path: &str) -> Result<OpenRead, Error>;
     fn read(&mut self, handle: u8, packets: u16) -> Result<Vec<u8>, Error>;

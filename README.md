@@ -25,8 +25,10 @@ sudo udevadm control --reload-rules
 sudo udevadm trigger
 ```
 
-Reconnect the Remote after installing the rule. The rule grants the active seat user access to the
-Harmony 300/350 USB identity (`046d:c124`).
+The rule covers the USB device and its `hidraw` node and grants the `wheel` group access, so it works
+for local and headless/SSH sessions. Replace `wheel` with your group if needed. Reconnect the Remote
+after installing the rule; for an already-connected unit, a software re-authorise (`echo 0/1` to
+`/sys/bus/usb/devices/<port>/authorized`) re-enumerates it without physical access.
 
 ## Commands
 

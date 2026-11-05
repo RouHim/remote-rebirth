@@ -2,7 +2,7 @@
 
 Status: ready-for-agent
 Source: `.spec/remote-rebirth.md`
-Domain: `GLOSSARY.md`, `docs/adr/0001`–`0006`
+Domain: `GLOSSARY.md`, `docs/adr/0001`–`0007`
 
 ## Problem Statement
 
@@ -118,7 +118,7 @@ v1 targets Architecture 16, the Harmony 300 Model Profile, skins 78 and 79, firm
 
 ### Dependencies
 
-- Runtime: `clap` 4.6.7 (derive), `serde` 1.0.229, `serde_json` 1.0.154, `sha2` 0.11.1, `thiserror` 2.0.21, `tracing` 0.1.44, `tracing-subscriber` 0.3.23 (fmt, no `env-filter`), `time` 0.3.55 (RFC3339 UTC), `nusb` 0.2.9.
+- Runtime: `clap` 4.6.7 (derive), `serde` 1.0.229, `serde_json` 1.0.154, `sha2` 0.11.1, `thiserror` 2.0.21, `tracing` 0.1.44, `tracing-subscriber` 0.3.23 (fmt, no `env-filter`), `time` 0.3.55 (RFC3339 UTC), `hidapi` 2.6.7.
 - Dev-only: `tempfile` 3.27.0, `jsonschema` (latest stable) for schema validation.
 - Excluded: `anyhow`, `regex`, `rust-embed`, `dirs`, `schemars`, and any async runtime. Static assets use `include_str!`/`include_bytes!`; XDG paths are read directly.
 - Re-check the latest stable versions when pinning; the versions above are the baseline as of 2026-11-05.
@@ -180,7 +180,7 @@ JSON goes to stdout; progress and diagnostics go to stderr. Every documented cod
 
 ### File protocol and Write
 
-- USB transport uses `nusb`: vendor-defined HID, 64-byte reports, endpoint discovery from the descriptor, interface claim with kernel-driver detach, and per-request read timeouts. The report size is confirmed against `/sys/sysinfo` and must be 64.
+- USB transport uses `hidapi` over hidraw: the kernel HID driver owns the interface, reports are 64 bytes, a write is a 65-byte buffer with a leading zero report ID that hidapi strips, and a read accepts 64 or 65 bytes with a 5 s timeout. The report size is confirmed against `/sys/sysinfo` and must be 64.
 - Requests use the file protocol header, big-endian parameters, and a sequence counter that runs 0–63 and wraps. Data packets carry up to 62 bytes; a chunk carries at most 50 data packets and ends with the `0x7E` done packet. The done packet consumes no sequence number.
 - Committed Write order: reset the filesystem, open `/cfg/usercfg` for writing, write chunks, request the checksum check, flush only when the reply is `m`, close, Read-Back, reboot unless `--no-reboot`.
 - Open for writing erases the configuration region before replying. All preconditions and the Journal's prepare record must complete before the reset or open is sent.
@@ -295,7 +295,7 @@ JSON goes to stdout; progress and diagnostics go to stderr. Every documented cod
 - The reference states that no Write, commit, or device-control sequence has ever been sent to a Harmony 300; the sequence is inferred from Logitech's client and one firmware reading. The physical gate is the only proof.
 - The checksum check compares the stored trailer word. Whether the expected value must be sent big-endian is explicitly unchecked; the hardware gate covers it.
 - Open for writing erases the configuration region before replying. A timeout there leaves the Remote erased; the Journal must record the prepare step before the reset.
-- The reference also records a session-poisoning malformed packet and a 63-byte report wedge in hidapi. The chosen `nusb` transport avoids the report-ID trap; the fake Remote covers the poisoning behavior.
+- The reference also records a session-poisoning malformed packet and a 63-byte report wedge in hidapi. The chosen hidraw transport always presents a leading zero report ID and tolerates a 64- or 65-byte write; the fake Remote covers the poisoning behavior.
 - The Harmony 300 and 350 share product ID `0xC124`; `bcdDevice` and `/sys/sysinfo` resolve the model and Skin. The Harmony 300's `bcdDevice` is `0x1078` even on Skin 79 units.
 - A connected Harmony 300 is available on the development machine (`046D:C124`, `bcdDevice 0x1078`). Opening it requires the documented udev rule; until the rule is installed, `detect` exits 3 with a permission error and the hardware gate remains pending.
 - Local tracker: this spec is `.scratch/remote-rebirth/spec.md`. No tickets have been created yet.

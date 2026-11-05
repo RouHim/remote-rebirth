@@ -118,7 +118,9 @@ fn open(
     let mut session = backend.open(&RemoteSelector {
         bus: descriptor.bus,
         address: descriptor.address,
+        path: descriptor.path.clone(),
     })?;
+    session.ping()?;
     let bytes = read_file(&mut *session, "/sys/sysinfo")?;
     let sysinfo = sysinfo::parse(&bytes);
     let packet_length = sysinfo.link_packet_length;

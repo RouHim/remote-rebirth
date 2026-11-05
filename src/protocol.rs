@@ -1,5 +1,6 @@
+use crate::container;
 use crate::error::Error;
-use crate::transport::OpenRead;
+use crate::transport::{OpenRead, RemoteSession};
 
 pub const REPORT_BYTES: usize = 64;
 pub const DATA_PACKET_PAYLOAD: usize = 62;
@@ -140,4 +141,180 @@ pub fn chunk_reply_matches(report: &[u8; REPORT_BYTES], last_sequence: u8, last:
         CHUNK_REPLY_FLAG | (last_sequence & 0x3F)
     };
     report[0] == expected
+}
+
+/// The byte-level link a [`FileProtocol`] speaks over: one 64-byte report each way.
+pub trait ReportLink {
+    fn send_report(&mut self, report: &[u8; REPORT_BYTES]) -> Result<(), Error>;
+    fn receive_report(&mut self) -> Result<[u8; REPORT_BYTES], Error>;
+}
+
+/// The file protocol above a [`ReportLink`]: sequence numbers, commands, reads, chunks and checks.
+pub struct FileProtocol<L: ReportLink> {
+    link: L,
+    sequence: Sequence,
+}
+
+impl<L: ReportLink> FileProtocol<L> {
+    pub fn new(link: L) -> Self {
+        Self {
+            link,
+            sequence: Sequence::new(),
+        }
+    }
+
+    fn command(&mut self, command: u8, params: &[Param<'_>]) -> Result<[u8; REPORT_BYTES], Error> {
+        let sequence = self.sequence.take();
+        let request = encode_request(command, sequence, params)?;
+        self.link.send_report(&request)?;
+        let reply = self.link.receive_report()?;
+        validate_reply(&reply, command, sequence)?;
+        Ok(reply)
+    }
+
+    fn send_only(&mut self, command: u8, params: &[Param<'_>]) -> Result<(), Error> {
+        let sequence = self.sequence.take();
+        let request = encode_request(command, sequence, params)?;
+        self.link.send_report(&request)
+    }
+}
+impl<L: ReportLink> RemoteSession for FileProtocol<L> {
+    fn ping(&mut self) -> Result<(), Error> {
+        self.command(0x00, &[])?;
+        Ok(())
+    }
+
+    fn reset_filesystem(&mut self) -> Result<(), Error> {
+        self.command(0xFF, &[Param::Byte(0x66)])?;
+        Ok(())
+    }
+
+    fn open_read(&mut self, path: &str) -> Result<OpenRead, Error> {
+        let reply = self.command(0x01, &[Param::String(path), Param::String("R")])?;
+        parse_open(&reply)
+    }
+
+    fn read(&mut self, handle: u8, packets: u16) -> Result<Vec<u8>, Error> {
+        let packets = u8::try_from(packets)
+            .map_err(|_| Error::Protocol("too many read packets requested".into()))?;
+        let sequence = self.sequence.take();
+        let request = encode_request(0x04, sequence, &[Param::Byte(handle), Param::Byte(packets)])?;
+        self.link.send_report(&request)?;
+
+        let mut data = Vec::new();
+        let mut reports = 0usize;
+        loop {
+            let reply = self.link.receive_report()?;
+            reports += 1;
+            if reports > 256 {
+                return Err(Error::Protocol(
+                    "read reply did not terminate within 256 reports".into(),
+                ));
+            }
+            if reply[0] == 0xFF {
+                if reply[1] == 0x04 {
+                    continue;
+                }
+                if reply[2] == 0xFF {
+                    return Err(Error::Protocol("Remote refused read".into()));
+                }
+                return Err(Error::Protocol(format!(
+                    "unexpected read reply 0x{:02X} 0x{:02X}",
+                    reply[0], reply[1]
+                )));
+            }
+            if reply[0] == 0xFE {
+                break;
+            }
+            let size = reply[1] as usize;
+            if size > DATA_PACKET_PAYLOAD {
+                return Err(Error::Protocol(format!(
+                    "read packet declares {size} bytes"
+                )));
+            }
+            data.extend_from_slice(&reply[2..2 + size]);
+        }
+        Ok(data)
+    }
+
+    fn open_write(&mut self, path: &str, size: u32) -> Result<u8, Error> {
+        let reply = self.command(
+            0x01,
+            &[Param::String(path), Param::String("W"), Param::DWord(size)],
+        )?;
+        Ok(parse_open(&reply)?.handle)
+    }
+
+    fn write_chunk(&mut self, handle: u8, data: &[u8], last: bool) -> Result<(), Error> {
+        if data.is_empty() {
+            return Err(Error::Protocol("empty write chunk".into()));
+        }
+        let payloads: Vec<&[u8]> = data.chunks(DATA_PACKET_PAYLOAD).collect();
+        let count = 1 + payloads.len() + usize::from(last);
+        let count = u8::try_from(count)
+            .map_err(|_| Error::Protocol("write chunk has too many packets".into()))?;
+        let sequence = self.sequence.take();
+        let request = encode_request(0x03, sequence, &[Param::Byte(handle), Param::Byte(count)])?;
+        self.link.send_report(&request)?;
+
+        let mut last_sequence = sequence;
+        for payload in payloads {
+            let sequence = self.sequence.take();
+            last_sequence = sequence;
+            let mut packet = [0u8; REPORT_BYTES];
+            packet[0] = sequence;
+            packet[1] = payload.len() as u8;
+            packet[2..2 + payload.len()].copy_from_slice(payload);
+            self.link.send_report(&packet)?;
+        }
+        if last {
+            let mut done = [0u8; REPORT_BYTES];
+            done[0] = DONE_PACKET;
+            self.link.send_report(&done)?;
+        }
+
+        let reply = self.link.receive_report()?;
+        if !chunk_reply_matches(&reply, last_sequence, last) {
+            let expected = if last {
+                DONE_PACKET | CHUNK_REPLY_FLAG
+            } else {
+                CHUNK_REPLY_FLAG | (last_sequence & 0x3F)
+            };
+            return Err(Error::Protocol(format!(
+                "unexpected write chunk reply 0x{:02X}, expected 0x{expected:02X}",
+                reply[0]
+            )));
+        }
+        Ok(())
+    }
+
+    fn check(&mut self, handle: u8, expected: u16, covered_len: u32) -> Result<bool, Error> {
+        let reply = self.command(
+            0x06,
+            &[
+                Param::Byte(handle),
+                Param::Byte(0x01),
+                Param::String("XOR"),
+                Param::Word(container::TRAILER_CHECKSUM_SEED),
+                Param::DWord(0),
+                Param::DWord(covered_len),
+                Param::Word(expected),
+            ],
+        )?;
+        Ok(reply[7] == b'm')
+    }
+
+    fn flush(&mut self, handle: u8) -> Result<(), Error> {
+        self.command(0x05, &[Param::Byte(handle), Param::Byte(0)])?;
+        Ok(())
+    }
+
+    fn close(&mut self, handle: u8) -> Result<(), Error> {
+        self.command(0x07, &[Param::Byte(handle)])?;
+        Ok(())
+    }
+
+    fn reboot(&mut self) -> Result<(), Error> {
+        self.send_only(0xFF, &[Param::Byte(0x00)])
+    }
 }

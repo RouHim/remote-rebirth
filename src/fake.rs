@@ -192,6 +192,10 @@ impl FakeSession {
 }
 
 impl RemoteSession for FakeSession {
+    fn ping(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
+
     fn reset_filesystem(&mut self) -> Result<(), Error> {
         self.calls.borrow_mut().push(Call::Reset);
         self.files.clear();
