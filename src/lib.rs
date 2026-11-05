@@ -6,6 +6,9 @@ mod detect;
 mod error;
 #[cfg(test)]
 mod fake;
+pub mod ir;
+#[cfg(test)]
+mod ir_tests;
 mod paths;
 mod profile;
 mod protocol;
