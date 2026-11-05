@@ -4,6 +4,8 @@
 //! hidraw backend cannot be used. hidapi's libusb backend does not need `usbhid`: it opens the
 //! interface, writes a 65-byte buffer with a leading zero report ID, and reads the 64-byte reply.
 
+use std::fs;
+
 use hidapi::{HidApi, HidDevice};
 
 use crate::error::Error;
@@ -32,15 +34,18 @@ impl RemoteBackend for HidBackend {
             .map_err(|error| Error::Device(format!("HID enumeration failed: {error}")))?;
         let mut descriptors = Vec::new();
         for (index, info) in api.device_list().enumerate() {
+            let path = info.path().to_string_lossy().into_owned();
+            let fallback = u8::try_from(index + 1).unwrap_or(u8::MAX);
+            let (bus, address) = location(&path, fallback);
             descriptors.push(RemoteDescriptor {
-                bus: 0,
-                address: u8::try_from(index + 1).unwrap_or(u8::MAX),
+                bus,
+                address,
                 vendor_id: info.vendor_id(),
                 product_id: info.product_id(),
                 bcd_device: info.release_number(),
                 product: info.product_string().map(str::to_owned),
                 serial: info.serial_number().map(str::to_owned),
-                path: Some(info.path().to_string_lossy().into_owned()),
+                path: Some(path),
             });
         }
         Ok(descriptors)
@@ -70,6 +75,27 @@ impl RemoteBackend for HidBackend {
         link.drain();
         Ok(Box::new(FileProtocol::new(link)))
     }
+}
+
+/// The sysfs name of the USB device a hidapi-libusb path names, e.g. `1-2` from `1-2:1.0`.
+pub(crate) fn sysfs_device(path: &str) -> Option<&str> {
+    let device = path.split(':').next()?;
+    (device.contains('-') && !device.starts_with('/')).then_some(device)
+}
+
+fn location(path: &str, fallback: u8) -> (u8, u8) {
+    let Some(device) = sysfs_device(path) else {
+        return (0, fallback);
+    };
+    let read = |name: &str| {
+        fs::read_to_string(format!("/sys/bus/usb/devices/{device}/{name}"))
+            .ok()
+            .and_then(|value| value.trim().parse::<u8>().ok())
+    };
+    (
+        read("busnum").unwrap_or(0),
+        read("devnum").unwrap_or(fallback),
+    )
 }
 
 struct HidLink {

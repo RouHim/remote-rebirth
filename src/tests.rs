@@ -1917,3 +1917,10 @@ fn a_read_accepts_a_flagged_data_packet_size() {
     assert_eq!(&data[..3], &[0, 1, 2]);
     assert_eq!(&data[62..65], &[0xA0, 0xA1, 0xA2]);
 }
+
+#[test]
+fn hidapi_path_names_the_usb_sysfs_device() {
+    assert_eq!(crate::hid::sysfs_device("1-2:1.0"), Some("1-2"));
+    assert_eq!(crate::hid::sysfs_device("1-2.3:1.0"), Some("1-2.3"));
+    assert!(crate::hid::sysfs_device("/dev/hidraw0").is_none());
+}
