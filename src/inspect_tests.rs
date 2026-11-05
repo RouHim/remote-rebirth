@@ -447,3 +447,17 @@ fn inspect_requires_a_file_without_print_schema() {
     assert!(stdout.is_empty());
     assert!(String::from_utf8_lossy(&stderr).contains("--file"));
 }
+
+#[test]
+fn inspect_json_validates_against_the_published_schema() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let path = write_container(&directory, &sample_container());
+    let (exit, stdout, stderr) = run_inspect(&path, &["--json"]);
+    assert_eq!(exit, Exit(0));
+    assert!(stderr.is_empty(), "{stderr}");
+    let value: Value = serde_json::from_str(&stdout).expect("json");
+    let schema: Value =
+        serde_json::from_str(include_str!("../schema/inspect-v1.json")).expect("schema");
+    let validator = jsonschema::validator_for(&schema).expect("compile schema");
+    validator.validate(&value).expect("inspect output validates");
+}
