@@ -8,8 +8,8 @@ use nusb::transfer::{Direction, In, Interrupt, Out};
 
 use crate::error::Error;
 use crate::protocol::{
-    CHUNK_REPLY_FLAG, DONE_PACKET, Param, chunk_reply_matches, encode_request, parse_open,
-    validate_reply,
+    CHUNK_REPLY_FLAG, DONE_PACKET, Param, Sequence, chunk_reply_matches, encode_request,
+    parse_open, validate_reply,
 };
 use crate::transport::{OpenRead, RemoteBackend, RemoteDescriptor, RemoteSelector, RemoteSession};
 
@@ -58,8 +58,7 @@ impl RemoteBackend for NusbBackend {
         let info = devices
             .into_iter()
             .find(|device| {
-                device.busnum() == selector.bus
-                    && device.device_address() == selector.address
+                device.busnum() == selector.bus && device.device_address() == selector.address
             })
             .ok_or_else(|| {
                 Error::Device(format!(
@@ -95,8 +94,8 @@ impl RemoteBackend for NusbBackend {
                 Direction::Out => out_address = Some(endpoint.address()),
             }
         }
-        let in_address =
-            in_address.ok_or_else(|| Error::Device("Remote has no interrupt IN endpoint".into()))?;
+        let in_address = in_address
+            .ok_or_else(|| Error::Device("Remote has no interrupt IN endpoint".into()))?;
         let out_address = out_address
             .ok_or_else(|| Error::Device("Remote has no interrupt OUT endpoint".into()))?;
 
@@ -118,7 +117,7 @@ impl RemoteBackend for NusbBackend {
         Ok(Box::new(NusbSession {
             reader,
             writer,
-            sequence: 0,
+            sequence: Sequence::new(),
             _interface: interface,
         }))
     }
@@ -127,15 +126,13 @@ impl RemoteBackend for NusbBackend {
 struct NusbSession {
     reader: EndpointRead<Interrupt>,
     writer: EndpointWrite<Interrupt>,
-    sequence: u8,
+    sequence: Sequence,
     _interface: nusb::Interface,
 }
 
 impl NusbSession {
     fn take_sequence(&mut self) -> u8 {
-        let sequence = self.sequence;
-        self.sequence = (self.sequence + 1) % 64;
-        sequence
+        self.sequence.take()
     }
 
     fn send_report(&mut self, report: &[u8; REPORT_BYTES]) -> Result<(), Error> {
@@ -187,11 +184,7 @@ impl RemoteSession for NusbSession {
         let packets = u8::try_from(packets)
             .map_err(|_| Error::Protocol("too many read packets requested".into()))?;
         let sequence = self.take_sequence();
-        let request = encode_request(
-            0x04,
-            sequence,
-            &[Param::Byte(handle), Param::Byte(packets)],
-        )?;
+        let request = encode_request(0x04, sequence, &[Param::Byte(handle), Param::Byte(packets)])?;
         self.send_report(&request)?;
 
         let mut data = Vec::new();
@@ -233,11 +226,7 @@ impl RemoteSession for NusbSession {
     fn open_write(&mut self, path: &str, size: u32) -> Result<u8, Error> {
         let reply = self.command(
             0x01,
-            &[
-                Param::String(path),
-                Param::String("W"),
-                Param::DWord(size),
-            ],
+            &[Param::String(path), Param::String("W"), Param::DWord(size)],
         )?;
         Ok(parse_open(&reply)?.handle)
     }
@@ -251,11 +240,7 @@ impl RemoteSession for NusbSession {
         let count = u8::try_from(count)
             .map_err(|_| Error::Protocol("write chunk has too many packets".into()))?;
         let sequence = self.take_sequence();
-        let request = encode_request(
-            0x03,
-            sequence,
-            &[Param::Byte(handle), Param::Byte(count)],
-        )?;
+        let request = encode_request(0x03, sequence, &[Param::Byte(handle), Param::Byte(count)])?;
         self.send_report(&request)?;
 
         let mut last_sequence = sequence;

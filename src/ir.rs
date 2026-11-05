@@ -334,6 +334,11 @@ impl IrRecord {
 
     /// Read a class-1 record whose header is at `base_addr + header_offset`.
     pub fn decode(bytes: &[u8], base_addr: u32, header_offset: usize) -> Result<Self, IrError> {
+        if header_offset > bytes.len() {
+            return Err(IrError::Record {
+                detail: "record header offset is outside the record area".into(),
+            });
+        }
         let header = &bytes[header_offset..];
         if header.len() < 12 {
             return Err(IrError::Record {

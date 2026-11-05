@@ -40,6 +40,12 @@ pub fn run(
 
     let read = read_file(&mut *opened.session, "/cfg/usercfg")?;
     let container = container::reconstruct_trailer(&read);
+    if container.len() > container::MAX_CONTAINER_SIZE {
+        return Err(Error::Validation(format!(
+            "Configuration is {} bytes; the 256 KiB region is the maximum",
+            container.len()
+        )));
+    }
     let validation = container::validation_status(&container);
     let digest = container::sha256_hex(&container);
     let timestamp = format_rfc3339(&clock.now())?;
