@@ -671,3 +671,29 @@ fn compose_refuses_a_favourite_whose_scan_the_channel_device_binds() {
     assert!(stderr.contains("teletext"), "{stderr}");
     assert!(!out.exists());
 }
+
+#[test]
+fn the_resolved_model_validates_against_its_published_schema() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let model = write_model(directory.path(), &two_device_model(79, true));
+    let out = directory.path().join("container.bin");
+    let (exit, _stdout, stderr) = compose(&model, &out, &[]);
+    assert_eq!(exit, Exit(0), "{stderr}");
+
+    let resolved: Value =
+        serde_json::from_slice(&std::fs::read(sidecar(&out)).expect("resolved-model sidecar"))
+            .expect("resolved model json");
+    let schema: Value =
+        serde_json::from_str(crate::compose::RESOLVED_SCHEMA).expect("resolved schema");
+    let validator = jsonschema::validator_for(&schema).expect("compile schema");
+    validator
+        .validate(&resolved)
+        .expect("the resolved model validates against its schema");
+
+    let model_schema: Value =
+        serde_json::from_str(crate::compose::MODEL_SCHEMA).expect("model schema");
+    let model_validator = jsonschema::validator_for(&model_schema).expect("compile model schema");
+    model_validator
+        .validate(&two_device_model(79, true))
+        .expect("the model input validates against the embedded schema");
+}

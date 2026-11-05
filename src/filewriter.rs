@@ -13,7 +13,6 @@ pub const CHUNK_DATA_PACKETS: usize = 50;
 /// Payload bytes carried by one write chunk at 62 bytes per data packet.
 pub const CHUNK_BYTES: usize = CHUNK_DATA_PACKETS * DATA_PACKET_PAYLOAD;
 
-const CHECK_SEED: u16 = 0x4321;
 const CONFIG_PATH: &str = "/cfg/usercfg";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -55,6 +54,17 @@ impl Operation {
     }
 }
 
+/// Everything one committed Write or Restore states besides the session and the Journal.
+#[derive(Debug, Clone, Copy)]
+pub struct Commit<'a> {
+    pub operation: Operation,
+    /// The Container, complete with its `PTYY` marker.
+    pub container: &'a [u8],
+    /// The recovery Backup a failure names.
+    pub backup: &'a Path,
+    pub no_reboot: bool,
+}
+
 /// Commit a Container to the Remote.
 ///
 /// The sequence matches the vendor client: reset, open for writing, chunked
@@ -62,16 +72,13 @@ impl Operation {
 /// caller records the prepare step before this function runs, because opening
 /// for writing erases the configuration region.
 pub fn execute(
-    operation: Operation,
+    commit: &Commit<'_>,
     session: &mut dyn RemoteSession,
     journal: &mut Journal<'_>,
-    container: &[u8],
-    backup: &Path,
-    no_reboot: bool,
 ) -> Result<WritePlan, Error> {
-    let payload = stored_bytes(container);
-    let covered_len = container.len().saturating_sub(6);
-    let expected = container::stored_checksum(container)
+    let payload = stored_bytes(commit.container);
+    let covered_len = commit.container.len().saturating_sub(6);
+    let expected = container::stored_checksum(commit.container)
         .ok_or_else(|| Error::Validation("Container is shorter than its trailer".into()))?;
 
     session.reset_filesystem()?;
@@ -80,18 +87,7 @@ pub fn execute(
     let handle = session.open_write(CONFIG_PATH, payload.len() as u32)?;
     journal.record("open_write", 0, payload.len(), "ok")?;
 
-    let result = commit_chunks(
-        session,
-        journal,
-        container,
-        payload,
-        handle,
-        expected,
-        covered_len,
-        backup,
-        operation,
-        no_reboot,
-    );
+    let result = commit_chunks(commit, session, journal, handle, expected, covered_len);
     if result.is_err() {
         // A refused check or a protocol failure leaves the session poisoned;
         // closing the handle is best effort and the caller reopens a fresh one.
@@ -100,19 +96,15 @@ pub fn execute(
     result
 }
 
-#[allow(clippy::too_many_arguments)]
 fn commit_chunks(
+    commit: &Commit<'_>,
     session: &mut dyn RemoteSession,
     journal: &mut Journal<'_>,
-    container: &[u8],
-    payload: &[u8],
     handle: u8,
     expected: u16,
     covered_len: usize,
-    backup: &Path,
-    operation: Operation,
-    no_reboot: bool,
 ) -> Result<WritePlan, Error> {
+    let payload = stored_bytes(commit.container);
     let write_plan = plan(payload.len());
     let mut offset = 0usize;
     for chunk in payload.chunks(CHUNK_BYTES) {
@@ -125,11 +117,11 @@ fn commit_chunks(
     journal.record("check", 0, covered_len, if accepted { "m" } else { "u" })?;
     if !accepted {
         return Err(Error::Protocol(format!(
-            "checksum check {} for a Container using seed 0x{CHECK_SEED:04X} returned u; the \
+            "checksum check {expected} for a Container using seed 0x{:04X} returned u; the \
              Configuration was not flushed and the Remote may be erased; run \
              `restore --backup {} --commit`",
-            expected,
-            backup.display()
+            container::TRAILER_CHECKSUM_SEED,
+            commit.backup.display()
         )));
     }
 
@@ -140,15 +132,18 @@ fn commit_chunks(
 
     let read = read_file(session, CONFIG_PATH)?;
     let read = container::reconstruct_trailer(&read);
-    if read != container {
+    if read != commit.container {
         journal.record("read_back", 0, read.len(), "mismatch")?;
         return Err(Error::Verification(mismatch_message(
-            operation, backup, &read, container,
+            commit.operation,
+            commit.backup,
+            &read,
+            commit.container,
         )));
     }
     journal.record("read_back", 0, read.len(), "ok")?;
 
-    if no_reboot {
+    if commit.no_reboot {
         journal.record("reboot", 0, 0, "skipped")?;
     } else {
         session.reboot()?;

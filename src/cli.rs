@@ -1,7 +1,8 @@
 use std::ffi::OsString;
+use std::io::Write;
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, error::ErrorKind};
 
 use crate::backup;
 use crate::compose;
@@ -9,7 +10,7 @@ use crate::detect;
 use crate::error::{Error, Exit};
 use crate::restore;
 use crate::runtime::Runtime;
-use crate::write;
+use crate::write::{self, Options};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -30,11 +31,13 @@ enum Command {
     },
     Backup {
         #[arg(long)]
-        out: PathBuf,
+        out: Option<PathBuf>,
         #[arg(long)]
         overwrite: bool,
         #[arg(long)]
         json: bool,
+        #[arg(long)]
+        print_schema: bool,
     },
     Inspect {
         #[arg(long)]
@@ -46,13 +49,17 @@ enum Command {
     },
     Compose {
         #[arg(long)]
-        model: PathBuf,
+        model: Option<PathBuf>,
         #[arg(long)]
-        out: PathBuf,
+        out: Option<PathBuf>,
         #[arg(long)]
         overwrite: bool,
         #[arg(long)]
         json: bool,
+        #[arg(long)]
+        print_schema: bool,
+        #[arg(long)]
+        print_resolved_schema: bool,
     },
     Write {
         #[arg(long)]
@@ -78,20 +85,50 @@ enum Command {
     },
 }
 
+impl Command {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Detect { .. } => "detect",
+            Self::Backup { .. } => "backup",
+            Self::Inspect { .. } => "inspect",
+            Self::Compose { .. } => "compose",
+            Self::Write { .. } => "write",
+            Self::Restore { .. } => "restore",
+        }
+    }
+}
+
 pub fn run(args: &[OsString], runtime: &mut Runtime<'_>) -> Exit {
     let cli = match Cli::try_parse_from(args.iter().cloned()) {
         Ok(cli) => cli,
-        Err(error) => {
-            let _ = write!(runtime.stderr, "{error}");
-            return Exit(2);
-        }
+        Err(error) => return report_clap_error(error, runtime),
     };
+
+    let span = tracing::info_span!("command", name = cli.command.name());
+    let _entered = span.enter();
+    tracing::debug!(argument_count = args.len(), "dispatching");
 
     match dispatch(cli.command, runtime) {
         Ok(()) => Exit(0),
         Err(error) => {
+            let exit = error.exit_code();
+            tracing::error!(%error, code = exit, "command failed");
             let _ = writeln!(runtime.stderr, "error: {error}");
-            Exit(error.exit_code())
+            Exit(exit)
+        }
+    }
+}
+
+/// Help and version are successful output on stdout; every other clap error is a usage error.
+fn report_clap_error(error: clap::Error, runtime: &mut Runtime<'_>) -> Exit {
+    match error.kind() {
+        ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => {
+            let _ = write!(runtime.stdout, "{error}");
+            Exit(0)
+        }
+        _ => {
+            let _ = write!(runtime.stderr, "{error}");
+            Exit(2)
         }
     }
 }
@@ -111,14 +148,22 @@ fn dispatch(command: Command, runtime: &mut Runtime<'_>) -> Result<(), Error> {
             out,
             overwrite,
             json,
-        } => backup::run(
-            &mut **backend,
-            &**clock,
-            &out,
-            overwrite,
-            json,
-            &mut **stdout,
-        ),
+            print_schema,
+        } => {
+            if print_schema {
+                stdout.write_all(backup::SCHEMA.as_bytes())?;
+                return Ok(());
+            }
+            let out = out.ok_or_else(|| Error::Usage("backup requires --out <path>".into()))?;
+            backup::run(
+                &mut **backend,
+                &**clock,
+                &out,
+                overwrite,
+                json,
+                &mut **stdout,
+            )
+        }
         Command::Inspect {
             file,
             json,
@@ -129,7 +174,24 @@ fn dispatch(command: Command, runtime: &mut Runtime<'_>) -> Result<(), Error> {
             out,
             overwrite,
             json,
-        } => compose::run(&**clock, &model, &out, overwrite, json, &mut **stdout),
+            print_schema,
+            print_resolved_schema,
+        } => {
+            if print_schema {
+                stdout.write_all(compose::MODEL_SCHEMA.as_bytes())?;
+            }
+            if print_resolved_schema {
+                stdout.write_all(compose::RESOLVED_SCHEMA.as_bytes())?;
+            }
+            if print_schema || print_resolved_schema {
+                return Ok(());
+            }
+            let model = model
+                .ok_or_else(|| Error::Usage("compose requires --model <model.json>".into()))?;
+            let out =
+                out.ok_or_else(|| Error::Usage("compose requires --out <container.bin>".into()))?;
+            compose::run(&**clock, &model, &out, overwrite, json, &mut **stdout)
+        }
         Command::Write {
             container,
             backup,
@@ -142,9 +204,11 @@ fn dispatch(command: Command, runtime: &mut Runtime<'_>) -> Result<(), Error> {
             state_dir,
             &container,
             &backup,
-            commit,
-            no_reboot,
-            json,
+            Options {
+                commit,
+                no_reboot,
+                json,
+            },
             &mut **stdout,
         ),
         Command::Restore {
@@ -157,9 +221,11 @@ fn dispatch(command: Command, runtime: &mut Runtime<'_>) -> Result<(), Error> {
             &**clock,
             state_dir,
             &backup,
-            commit,
-            no_reboot,
-            json,
+            Options {
+                commit,
+                no_reboot,
+                json,
+            },
             &mut **stdout,
         ),
     }

@@ -463,3 +463,39 @@ fn inspect_json_validates_against_the_published_schema() {
         .validate(&value)
         .expect("inspect output validates");
 }
+
+#[test]
+fn inspect_rejects_a_container_without_an_architecture_record() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let mut bytes = sample_container();
+    // NULL raw slot 1, whose address sits after the spare byte in the section table.
+    bytes[0x10..0x13].copy_from_slice(&[0, 0, 0]);
+    seal(&mut bytes);
+    let path = write_container(&directory, &bytes);
+
+    let (exit, stdout, stderr) = run_inspect(&path, &["--json"]);
+
+    assert_eq!(exit, Exit(4));
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(stderr.contains("architecture record"), "{stderr}");
+    assert!(stderr.contains("NULL"), "{stderr}");
+}
+
+#[test]
+fn inspect_rejects_a_container_stating_another_architecture() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let mut bytes = sample_container();
+    let address =
+        u32::from(bytes[0x10]) | u32::from(bytes[0x11]) << 8 | u32::from(bytes[0x12]) << 16;
+    let offset = (address - BASE) as usize;
+    bytes[offset] = 17;
+    bytes[offset + 1] = 17;
+    seal(&mut bytes);
+    let path = write_container(&directory, &bytes);
+
+    let (exit, stdout, stderr) = run_inspect(&path, &["--json"]);
+
+    assert_eq!(exit, Exit(4));
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(stderr.contains("expected 16"), "{stderr}");
+}

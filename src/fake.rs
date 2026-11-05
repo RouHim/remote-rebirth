@@ -2,8 +2,10 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::container;
 use crate::error::Error;
 use crate::filewriter::CHUNK_BYTES;
+use crate::protocol::DATA_PACKET_PAYLOAD;
 use crate::transport::{OpenRead, RemoteBackend, RemoteDescriptor, RemoteSelector, RemoteSession};
 
 pub struct FakeDevice {
@@ -59,8 +61,13 @@ pub struct Faults {
     pub short_read: bool,
     /// A write packet is reported as malformed.
     pub malformed_packet: bool,
+    /// The first write chunk of the next session is reported as malformed, and the fault clears so
+    /// a reopened session succeeds.
+    pub fail_first_chunk: bool,
     /// The Remote disappears during the write.
     pub disconnect: bool,
+    /// A second open of the same Remote fails, so a recovery cannot complete.
+    pub refuse_reopen: bool,
     /// The Read-Back returns different bytes than were written.
     pub read_back_mismatch: bool,
 }
@@ -130,6 +137,18 @@ impl RemoteBackend for FakeBackend {
                     selector.bus, selector.address
                 ))
             })?;
+        let reopened = self.calls.borrow().iter().any(|call| {
+            matches!(
+                call,
+                Call::Open { bus, address }
+                    if *bus == selector.bus && *address == selector.address
+            )
+        });
+        if reopened && self.stores[index].borrow().faults.refuse_reopen {
+            return Err(Error::Device(
+                "the fake Remote cannot be reopened after the failure".into(),
+            ));
+        }
         self.calls.borrow_mut().push(Call::Open {
             bus: selector.bus,
             address: selector.address,
@@ -214,7 +233,7 @@ impl RemoteSession for FakeSession {
             .files
             .get_mut(&handle)
             .ok_or_else(|| Error::Protocol(format!("invalid handle {handle}")))?;
-        let maximum = (packets as usize).saturating_mul(62);
+        let maximum = (packets as usize).saturating_mul(DATA_PACKET_PAYLOAD);
         let end = (file.offset + maximum).min(file.data.len());
         let chunk = file.data[file.offset..end].to_vec();
         file.offset = end;
@@ -253,6 +272,12 @@ impl RemoteSession for FakeSession {
             ));
         }
         if faults.malformed_packet {
+            return Err(Error::Protocol(
+                "the fake Remote sent a malformed packet".into(),
+            ));
+        }
+        if faults.fail_first_chunk {
+            self.store.borrow_mut().faults.fail_first_chunk = false;
             return Err(Error::Protocol(
                 "the fake Remote sent a malformed packet".into(),
             ));
@@ -306,7 +331,7 @@ impl RemoteSession for FakeSession {
                 write.draft.len()
             )));
         }
-        let mut accumulator = 0x4321u16;
+        let mut accumulator = container::TRAILER_CHECKSUM_SEED;
         for word in write.draft[..covered].as_chunks::<2>().0 {
             accumulator ^= u16::from_le_bytes(*word);
         }

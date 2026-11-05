@@ -9,12 +9,12 @@
 
 use time::OffsetDateTime;
 
-use crate::error::Error;
-use crate::frame::{Piece, Reference};
-use crate::gspm::{
+use crate::architecture::{
     CLOCK_STATE_MAXIMA, END_MARKER_LENGTH, Instruction, TaggedEntry, action_list_bytes,
     clock_fields,
 };
+use crate::error::Error;
+use crate::frame::{Piece, Reference};
 
 /// The start-up event table's entries that call a list of their own: entries 1 to 4. Entry 0 and
 /// entries 5 to 10 call the empty list.

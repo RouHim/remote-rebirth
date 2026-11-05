@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
@@ -9,25 +9,40 @@ use crate::container::{self, MAX_CONTAINER_SIZE};
 use crate::detect;
 use crate::error::Error;
 use crate::filewriter::{self, WritePlan};
+use crate::inspect_container::{self, ParsedContainer};
 use crate::journal::Journal;
-use crate::profile;
+use crate::paths::sidecar_path;
+use crate::profile::{self, ModelProfile};
 use crate::sysinfo::SysInfo;
-use crate::transport::{RemoteBackend, RemoteSelector, read_file};
+use crate::transport::{RemoteBackend, RemoteDescriptor, RemoteSelector, RemoteSession, read_file};
 
-#[allow(clippy::too_many_arguments)]
+/// The flags a Write or Restore shares.
+#[derive(Debug, Clone, Copy)]
+pub struct Options {
+    pub commit: bool,
+    pub no_reboot: bool,
+    pub json: bool,
+}
+
 pub fn run(
     backend: &mut dyn RemoteBackend,
     clock: &dyn Clock,
     state_dir: &Path,
     container_path: &Path,
     backup_path: &Path,
-    commit: bool,
-    no_reboot: bool,
-    json: bool,
+    options: Options,
     stdout: &mut dyn Write,
 ) -> Result<(), Error> {
+    let span = tracing::info_span!(
+        "write",
+        container = %container_path.display(),
+        backup = %backup_path.display(),
+        commit = options.commit
+    );
+    let _entered = span.enter();
+
     let container = read_input(container_path, "Container")?;
-    validate_container(&container)?;
+    let parsed = validate_container(&container)?;
     let (backup, sidecar) = load_backup(backup_path)?;
 
     let detect::OpenedRemote {
@@ -35,7 +50,8 @@ pub fn run(
         sysinfo,
         mut session,
     } = detect::open_remote(backend)?;
-    check_remote(&sysinfo, &sidecar)?;
+    let profile = check_remote(&sysinfo, &sidecar)?;
+    check_container(&parsed, &sysinfo, profile)?;
 
     let current = read_file(&mut *session, "/cfg/usercfg")?;
     let current = container::reconstruct_trailer(&current);
@@ -49,9 +65,9 @@ pub fn run(
 
     let write_plan = filewriter::plan(filewriter::stored_bytes(&container).len());
 
-    if !commit {
+    if !options.commit {
         report(
-            json,
+            options.json,
             stdout,
             &WriteOutput::new(
                 filewriter::Operation::Write.as_str(),
@@ -61,13 +77,20 @@ pub fn run(
                 container.len(),
                 &sidecar.sha256,
                 write_plan,
-                no_reboot,
+                options.no_reboot,
                 None,
             ),
         )?;
         return Ok(());
     }
 
+    let commit = filewriter::Commit {
+        operation: filewriter::Operation::Write,
+        container: &container,
+        backup: backup_path,
+        no_reboot: options.no_reboot,
+    };
+    tracing::info!("committed Write starting");
     let mut journal = Journal::create(state_dir, clock, "write", backup_path, &sidecar.sha256)?;
     journal.record(
         "prepare",
@@ -76,28 +99,11 @@ pub fn run(
         "ok",
     )?;
 
-    let result = filewriter::execute(
-        filewriter::Operation::Write,
-        &mut *session,
-        &mut journal,
-        &container,
-        backup_path,
-        no_reboot,
-    );
-
-    if let Err(error) = result {
-        if matches!(error, Error::Protocol(_)) {
-            drop(session);
-            let _ = backend.open(&RemoteSelector {
-                bus: descriptor.bus,
-                address: descriptor.address,
-            });
-        }
-        return Err(error);
-    }
+    commit_container(backend, &descriptor, session, &mut journal, &commit)?;
+    tracing::info!("committed Write finished and verified");
 
     report(
-        json,
+        options.json,
         stdout,
         &WriteOutput::new(
             filewriter::Operation::Write.as_str(),
@@ -107,10 +113,73 @@ pub fn run(
             container.len(),
             &sidecar.sha256,
             write_plan,
-            no_reboot,
+            options.no_reboot,
             Some(journal.path()),
         ),
     )
+}
+
+/// Run a commit, and on a protocol failure reopen a fresh session so the failure is not reported
+/// from a poisoned handle. The recovery read proves the new session answers.
+pub(crate) fn commit_container(
+    backend: &mut dyn RemoteBackend,
+    descriptor: &RemoteDescriptor,
+    session: Box<dyn RemoteSession>,
+    journal: &mut Journal<'_>,
+    commit: &filewriter::Commit<'_>,
+) -> Result<WritePlan, Error> {
+    let mut session = session;
+    match filewriter::execute(commit, &mut *session, journal) {
+        Ok(plan) => Ok(plan),
+        Err(error @ Error::Protocol(_)) => {
+            drop(session);
+            Err(recover(backend, descriptor, journal, error))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn recover(
+    backend: &mut dyn RemoteBackend,
+    descriptor: &RemoteDescriptor,
+    journal: &mut Journal<'_>,
+    error: Error,
+) -> Error {
+    tracing::error!(%error, "protocol failure; reopening a fresh session");
+    if let Err(journal_error) = journal.record("failure", 0, 0, "protocol") {
+        tracing::error!(%journal_error, "could not journal the failure");
+    }
+    let selector = RemoteSelector {
+        bus: descriptor.bus,
+        address: descriptor.address,
+    };
+    let outcome = match backend.open(&selector) {
+        Ok(mut fresh) => match read_file(&mut *fresh, "/sys/sysinfo") {
+            Ok(_) => Ok(()),
+            Err(read_error) => Err(format!(
+                "the reopened session could not read /sys/sysinfo: {read_error}"
+            )),
+        },
+        Err(open_error) => Err(format!("the Remote could not be reopened: {open_error}")),
+    };
+    match outcome {
+        Ok(()) => {
+            if let Err(journal_error) = journal.record("recover", 0, 0, "ok") {
+                tracing::error!(%journal_error, "could not journal the recovery");
+            }
+            tracing::warn!("reopened a fresh session");
+            error
+        }
+        Err(detail) => {
+            if let Err(journal_error) = journal.record("recover", 0, 0, "failed") {
+                tracing::error!(%journal_error, "could not journal the failed recovery");
+            }
+            Error::Protocol(format!(
+                "{error}; recovery failed: {detail}. The session may be poisoned: disconnect and \
+                 reconnect the Remote, then run `restore --backup <path> --commit`"
+            ))
+        }
+    }
 }
 
 pub(crate) fn read_input(path: &Path, what: &str) -> Result<Vec<u8>, Error> {
@@ -119,7 +188,7 @@ pub(crate) fn read_input(path: &Path, what: &str) -> Result<Vec<u8>, Error> {
     })
 }
 
-pub(crate) fn validate_container(bytes: &[u8]) -> Result<(), Error> {
+pub(crate) fn validate_container(bytes: &[u8]) -> Result<ParsedContainer, Error> {
     if bytes.len() > MAX_CONTAINER_SIZE {
         return Err(Error::Validation(format!(
             "Container is {} bytes; the maximum is {MAX_CONTAINER_SIZE} bytes",
@@ -132,25 +201,29 @@ pub(crate) fn validate_container(bytes: &[u8]) -> Result<(), Error> {
         ));
     }
     match container::validation_status(bytes) {
-        container::ValidationStatus::Ok => Ok(()),
-        container::ValidationStatus::ChecksumMismatch => Err(Error::Validation(format!(
-            "Container checksum does not match its stored trailer word {}",
-            container::stored_checksum(bytes).unwrap_or_default()
-        ))),
+        container::ValidationStatus::Ok => {}
+        container::ValidationStatus::ChecksumMismatch => {
+            return Err(Error::Validation(format!(
+                "Container checksum does not match its stored trailer word {}",
+                container::stored_checksum(bytes).unwrap_or_default()
+            )));
+        }
         container::ValidationStatus::Unreadable => {
-            Err(Error::Validation("Container is unreadable".into()))
+            return Err(Error::Validation("Container is unreadable".into()));
         }
     }
+    let parsed = inspect_container::parse(bytes)?;
+    if parsed.container.architecture != Some(profile::HARMONY_300.architecture) {
+        return Err(Error::Validation(format!(
+            "Container states architecture {:?}; this tool writes Architecture 16 only",
+            parsed.container.architecture
+        )));
+    }
+    Ok(parsed)
 }
 
 pub(crate) fn is_empty_configuration(bytes: &[u8]) -> bool {
     bytes.is_empty() || bytes.iter().all(|byte| *byte == 0xFF)
-}
-
-pub(crate) fn sidecar_path(backup: &Path) -> PathBuf {
-    let mut name = backup.as_os_str().to_os_string();
-    name.push(".json");
-    PathBuf::from(name)
 }
 
 #[derive(Debug, Deserialize)]
@@ -196,6 +269,8 @@ pub(crate) fn load_backup(path: &Path) -> Result<(Vec<u8>, BackupSidecar), Error
         )));
     }
     if sidecar.validation != "ok" {
+        // A deliberate safety extension beyond the spec: Restore only trusts a Backup whose capture
+        // sidecar says it was readable and checksum-clean, so a damaged file is never replayed.
         return Err(Error::Validation(format!(
             "Backup validation is {}; refusing to write from an unverified Backup",
             sidecar.validation
@@ -205,7 +280,10 @@ pub(crate) fn load_backup(path: &Path) -> Result<(Vec<u8>, BackupSidecar), Error
 }
 
 /// Refuse an unsupported Remote, or a Backup captured from a different model or Skin.
-pub(crate) fn check_remote(sysinfo: &SysInfo, sidecar: &BackupSidecar) -> Result<(), Error> {
+pub(crate) fn check_remote(
+    sysinfo: &SysInfo,
+    sidecar: &BackupSidecar,
+) -> Result<&'static ModelProfile, Error> {
     let profile = profile::for_identity(sysinfo.architecture, sysinfo.skin).ok_or_else(|| {
         Error::Device(format!(
             "the connected Remote is recognised but not supported in this version \
@@ -221,6 +299,52 @@ pub(crate) fn check_remote(sysinfo: &SysInfo, sidecar: &BackupSidecar) -> Result
             "Backup was captured from {} (architecture {:?}, Skin {:?}), but the connected \
              Remote is {} (Skin {:?})",
             sidecar.model, sidecar.architecture, sidecar.skin, profile.model, sysinfo.skin
+        )));
+    }
+    Ok(profile)
+}
+
+/// Refuse a Container the connected Remote's Model Profile and Skin cannot hold.
+pub(crate) fn check_container(
+    parsed: &ParsedContainer,
+    sysinfo: &SysInfo,
+    profile: &ModelProfile,
+) -> Result<(), Error> {
+    if parsed.container.skin != sysinfo.skin {
+        return Err(Error::Validation(format!(
+            "Container is for Skin {:?}, but the connected Remote reports Skin {:?}",
+            parsed.container.skin, sysinfo.skin
+        )));
+    }
+    if parsed.devices.len() > profile.max_devices {
+        return Err(Error::Validation(format!(
+            "Container declares {} Devices; profile '{}' accepts at most {}",
+            parsed.devices.len(),
+            profile.id,
+            profile.max_devices
+        )));
+    }
+    if parsed.ir_groups > profile.max_ir_groups {
+        return Err(Error::Validation(format!(
+            "Container declares {} infrared groups; profile '{}' accepts at most {}",
+            parsed.ir_groups, profile.id, profile.max_ir_groups
+        )));
+    }
+    let skin = sysinfo
+        .skin
+        .and_then(|skin| profile::skin_profile(profile, skin));
+    let skin = skin.ok_or_else(|| {
+        Error::Validation(format!(
+            "Container Skin {:?} is not accepted by profile '{}'",
+            sysinfo.skin, profile.id
+        ))
+    })?;
+    if parsed.favourites.len() > skin.favourite_capacity {
+        return Err(Error::Validation(format!(
+            "Container declares {} Favourites; Skin {} accepts at most {}",
+            parsed.favourites.len(),
+            skin.skin,
+            skin.favourite_capacity
         )));
     }
     Ok(())

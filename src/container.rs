@@ -3,11 +3,12 @@ use sha2::{Digest, Sha256};
 
 use crate::error::Error;
 
-#[allow(dead_code)]
 pub const FLASH_BASE: u32 = 0x020000;
 pub const MAX_CONTAINER_SIZE: usize = 256 * 1024;
 pub const HEADER_MIN_LEN: usize = 0x4B;
 pub const END_MARKER: &[u8; 4] = b"PTYY";
+/// The seed the trailer checksum and the Remote's checksum check both start from.
+pub const TRAILER_CHECKSUM_SEED: u16 = 0x4321;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -48,7 +49,7 @@ pub fn trailer_checksum(bytes: &[u8]) -> Result<u16, Error> {
             "Container is shorter than its trailer".into(),
         ));
     }
-    let mut accumulator = 0x4321u16;
+    let mut accumulator = TRAILER_CHECKSUM_SEED;
     for word in bytes[..bytes.len() - 6].as_chunks::<2>().0 {
         accumulator ^= u16::from_le_bytes(*word);
     }

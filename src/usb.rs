@@ -6,14 +6,14 @@ use nusb::descriptors::TransferType;
 use nusb::io::{EndpointRead, EndpointWrite};
 use nusb::transfer::{Direction, In, Interrupt, Out};
 
+use crate::container;
 use crate::error::Error;
 use crate::protocol::{
-    CHUNK_REPLY_FLAG, DONE_PACKET, Param, Sequence, chunk_reply_matches, encode_request,
-    parse_open, validate_reply,
+    CHUNK_REPLY_FLAG, DATA_PACKET_PAYLOAD, DONE_PACKET, Param, REPORT_BYTES, Sequence,
+    chunk_reply_matches, encode_request, parse_open, validate_reply,
 };
 use crate::transport::{OpenRead, RemoteBackend, RemoteDescriptor, RemoteSelector, RemoteSession};
 
-const REPORT_BYTES: usize = 64;
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -213,7 +213,7 @@ impl RemoteSession for NusbSession {
                 break;
             }
             let size = reply[1] as usize;
-            if size > 62 {
+            if size > DATA_PACKET_PAYLOAD {
                 return Err(Error::Protocol(format!(
                     "read packet declares {size} bytes"
                 )));
@@ -235,7 +235,7 @@ impl RemoteSession for NusbSession {
         if data.is_empty() {
             return Err(Error::Protocol("empty write chunk".into()));
         }
-        let payloads: Vec<&[u8]> = data.chunks(62).collect();
+        let payloads: Vec<&[u8]> = data.chunks(DATA_PACKET_PAYLOAD).collect();
         let count = 1 + payloads.len() + usize::from(last);
         let count = u8::try_from(count)
             .map_err(|_| Error::Protocol("write chunk has too many packets".into()))?;
@@ -281,7 +281,7 @@ impl RemoteSession for NusbSession {
                 Param::Byte(handle),
                 Param::Byte(0x01),
                 Param::String("XOR"),
-                Param::Word(0x4321),
+                Param::Word(container::TRAILER_CHECKSUM_SEED),
                 Param::DWord(0),
                 Param::DWord(covered_len),
                 Param::Word(expected),

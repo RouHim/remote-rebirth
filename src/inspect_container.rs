@@ -10,6 +10,7 @@ use serde::Serialize;
 
 use crate::container::{self, FLASH_BASE, MAX_CONTAINER_SIZE};
 use crate::error::Error;
+use crate::profile::{self, ModelProfile};
 
 pub const SLOT_COUNT: usize = 15;
 pub const SECTION_TABLE_OFFSET: usize = 0x0B;
@@ -41,9 +42,6 @@ const SLOT_NAMES: [&str; SLOT_COUNT] = [
     "metadata_archive",
     "unused",
 ];
-
-const DEVICE_KEY_LABELS: [&str; 4] = ["TV", "Cable/Sat", "DVD", "VCR/Aux"];
-const DEVICE_KEY_SCANS: [u8; 4] = [5, 1, 7, 4];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Slot {
@@ -275,6 +273,10 @@ pub struct ParsedContainer {
     pub schema_version: u8,
     pub container: ContainerInfo,
     pub raw_slots: Vec<RawSlot>,
+    /// The infrared group count from the infrared table. Not serialized: `ir_records` states each
+    /// record's group, so JSON consumers need no separate count, while Write and Restore check it.
+    #[serde(skip)]
+    pub ir_groups: usize,
     pub key_table: KeyTable,
     pub key_maps: Vec<KeyMap>,
     pub devices: Vec<Device>,
@@ -412,19 +414,14 @@ pub fn parse(bytes: &[u8]) -> Result<ParsedContainer, Error> {
 
     let key_table = parse_key_table(bytes, trailer_offset)?;
     let (architecture, skin) = parse_architecture_record(bytes, &slots)?;
-    if architecture.is_some_and(|value| value != 16) {
-        return Err(Error::Validation(format!(
-            "architecture record states architecture {}, expected 16",
-            architecture.unwrap_or(0)
-        )));
-    }
 
-    let ir_records = parse_ir_database(bytes, &slots)?;
+    let (ir_groups, ir_records) = parse_ir_database(bytes, &slots)?;
     let key_maps = parse_key_maps(bytes, &slots)?;
     let action_lists = parse_action_lists(bytes, &slots)?;
-    let devices = derive_devices(&key_maps, &ir_records);
+    let key_profile = profile::for_skin(skin).unwrap_or(&profile::HARMONY_300);
+    let devices = derive_devices(&key_maps, &ir_records, key_profile);
     let watch_tv_activity = derive_watch_tv(&key_table, &key_maps, &action_lists)?;
-    let favourites = derive_favourites(&key_maps, &action_lists, skin);
+    let favourites = derive_favourites(&key_maps, &action_lists, key_profile, skin);
     let state_variables = parse_state_variables(bytes, &slots)?;
     let number_senders = parse_number_senders(bytes, &slots)?;
 
@@ -459,11 +456,12 @@ pub fn parse(bytes: &[u8]) -> Result<ParsedContainer, Error> {
             checksum: stored,
             slots: SLOT_COUNT,
             pointer_count: SLOT_COUNT,
-            architecture,
-            skin,
+            architecture: Some(architecture),
+            skin: Some(skin),
             sha256: container::sha256_hex(bytes),
         },
         raw_slots,
+        ir_groups,
         key_table,
         key_maps,
         devices,
@@ -475,19 +473,33 @@ pub fn parse(bytes: &[u8]) -> Result<ParsedContainer, Error> {
     })
 }
 
-fn parse_architecture_record(
-    bytes: &[u8],
-    slots: &[Slot; SLOT_COUNT],
-) -> Result<(Option<u8>, Option<u8>), Error> {
+fn parse_architecture_record(bytes: &[u8], slots: &[Slot; SLOT_COUNT]) -> Result<(u8, u8), Error> {
     let slot = slots[1];
-    if slot.null || slot.length < 4 {
-        return Ok((None, None));
+    if slot.null {
+        return Err(Error::Validation(
+            "raw slot 1 (architecture record) is NULL; not an Architecture 16 Container".into(),
+        ));
+    }
+    if slot.length < 4 {
+        return Err(Error::Validation(format!(
+            "raw slot 1 (architecture record) is {} bytes, too short to state an architecture",
+            slot.length
+        )));
     }
     let offset = slot.offset;
     let first = u8_at(bytes, offset, "architecture record")?;
     let second = u8_at(bytes, offset + 1, "architecture record")?;
-    let architecture = (first == second).then_some(first);
-    Ok((architecture, Some(u8_at(bytes, offset + 2, "skin")?)))
+    if first != second {
+        return Err(Error::Validation(format!(
+            "architecture record states {first} and {second}; it must state one architecture twice"
+        )));
+    }
+    if first != 16 {
+        return Err(Error::Validation(format!(
+            "architecture record states architecture {first}, expected 16"
+        )));
+    }
+    Ok((first, u8_at(bytes, offset + 2, "skin")?))
 }
 
 fn parse_key_table(bytes: &[u8], trailer_offset: usize) -> Result<KeyTable, Error> {
@@ -539,10 +551,13 @@ fn event_name(tag: u8) -> &'static str {
     }
 }
 
-fn parse_ir_database(bytes: &[u8], slots: &[Slot; SLOT_COUNT]) -> Result<Vec<IrRecord>, Error> {
+fn parse_ir_database(
+    bytes: &[u8],
+    slots: &[Slot; SLOT_COUNT],
+) -> Result<(usize, Vec<IrRecord>), Error> {
     let slot = slots[IR_DATABASE_SLOT];
     if slot.null {
-        return Ok(Vec::new());
+        return Ok((0, Vec::new()));
     }
     let count = u8_at(bytes, slot.offset, "infrared group count")? as usize;
     let table_end = slot.offset + 1 + 3 * count;
@@ -588,7 +603,7 @@ fn parse_ir_database(bytes: &[u8], slots: &[Slot; SLOT_COUNT]) -> Result<Vec<IrR
             records.push(record);
         }
     }
-    Ok(records)
+    Ok((count, records))
 }
 
 fn parse_ir_record(
@@ -983,14 +998,19 @@ fn instruction_ref(operand: u16, opcode: u8) -> InstructionRef {
     }
 }
 
-fn derive_devices(key_maps: &[KeyMap], ir_records: &[IrRecord]) -> Vec<Device> {
+fn derive_devices(
+    key_maps: &[KeyMap],
+    ir_records: &[IrRecord],
+    profile: &ModelProfile,
+) -> Vec<Device> {
     let Some(first) = key_maps.first() else {
         return Vec::new();
     };
     let mut devices = Vec::new();
     for map in key_maps.iter().skip(1) {
         let binding = first.entries.iter().find_map(|entry| {
-            let place = DEVICE_KEY_SCANS
+            let place = profile
+                .device_key_scans
                 .iter()
                 .position(|scan| *scan == entry.scan_code)?;
             if entry.map_index? as usize != map.index || entry.event == "none" {
@@ -1008,7 +1028,11 @@ fn derive_devices(key_maps: &[KeyMap], ir_records: &[IrRecord]) -> Vec<Device> {
                 (
                     Some(DeviceKey {
                         place: place as u8,
-                        label: DEVICE_KEY_LABELS[place],
+                        label: profile
+                            .device_key_labels
+                            .get(place)
+                            .copied()
+                            .unwrap_or("Device Key"),
                         scan_code: entry.scan_code,
                         event: entry.event,
                     }),
@@ -1157,7 +1181,8 @@ fn select_map_of(instruction: &Instruction) -> Option<u8> {
 fn derive_favourites(
     key_maps: &[KeyMap],
     action_lists: &[Vec<Instruction>],
-    skin: Option<u8>,
+    profile: &ModelProfile,
+    skin: u8,
 ) -> Vec<Favourite> {
     let mut favourites = Vec::new();
     for map in key_maps {
@@ -1172,7 +1197,7 @@ fn derive_favourites(
                 continue;
             };
             favourites.push(Favourite {
-                key: favourite_key(skin, entry.scan_code),
+                key: profile::favourite_key(profile, skin, entry.scan_code),
                 scan_code: entry.scan_code,
                 map_index: map.index,
                 action_list: entry.operand,
@@ -1194,26 +1219,6 @@ fn favourite_channel(list: &[Instruction]) -> Option<u16> {
         }
     }
     None
-}
-
-fn favourite_key(skin: Option<u8>, scan_code: u8) -> Option<u8> {
-    match skin {
-        Some(79) => match scan_code {
-            8 => Some(1),
-            9 => Some(2),
-            2 => Some(3),
-            34 => Some(4),
-            _ => None,
-        },
-        _ => match scan_code {
-            8 => Some(1),
-            9 => Some(2),
-            11 => Some(3),
-            34 => Some(4),
-            2 => Some(5),
-            _ => None,
-        },
-    }
 }
 
 fn address_offset(bytes: &[u8], address: u32, what: &str) -> Result<usize, Error> {
