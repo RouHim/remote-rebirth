@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -7,8 +8,9 @@ use crate::clock::Clock;
 use crate::container::{self, ValidationStatus};
 use crate::fake::{Call, FakeBackend, FakeDevice};
 use crate::filewriter::{self, WritePlan};
+use crate::protocol::{FileProtocol, REPORT_BYTES, ReportLink, chunk_reply_matches};
 use crate::runtime::Runtime;
-use crate::transport::RemoteDescriptor;
+use crate::transport::{RemoteDescriptor, RemoteSession};
 use crate::{Exit, run};
 
 struct FixedClock(time::OffsetDateTime);
@@ -396,7 +398,7 @@ fn write_dry_run_validates_without_opening_for_write() {
     assert_eq!(value["commit"].as_bool(), Some(false));
     assert_eq!(value["chunks"].as_u64(), Some(1));
     assert_eq!(value["data_packets"].as_u64(), Some(11));
-    assert_eq!(value["bytes"].as_u64(), Some(666));
+    assert_eq!(value["bytes"].as_u64(), Some(670));
     assert!(value["journal"].is_null());
 
     let calls = backend.calls().borrow().clone();
@@ -621,7 +623,7 @@ fn write_commit_writes_checks_flushes_reads_back_and_reboots() {
 
     assert!(tail.iter().any(|call| matches!(
         call,
-        Call::OpenWrite { path, size } if path == "/cfg/usercfg" && *size == 666
+        Call::OpenWrite { path, size } if path == "/cfg/usercfg" && *size == 670
     )));
     let expected = container::stored_checksum(&container).expect("checksum");
     assert!(tail.iter().any(|call| matches!(
@@ -641,11 +643,8 @@ fn write_commit_writes_checks_flushes_reads_back_and_reboots() {
         })
         .flatten()
         .collect();
-    assert_eq!(written, container[..container.len() - 4].to_vec());
-    assert_eq!(
-        backend.store(0).borrow().usercfg,
-        container[..container.len() - 4].to_vec()
-    );
+    assert_eq!(written, container);
+    assert_eq!(backend.store(0).borrow().usercfg, container);
 
     let records = journal_records(directory.path());
     let steps: Vec<&str> = records
@@ -723,24 +722,18 @@ fn write_commit_splits_a_large_container_into_chunks() {
     let value: Value = serde_json::from_str(&stdout).expect("json");
     assert_eq!(value["chunks"].as_u64(), Some(3));
     assert_eq!(value["data_packets"].as_u64(), Some(113));
-    assert_eq!(value["bytes"].as_u64(), Some(6996));
+    assert_eq!(value["bytes"].as_u64(), Some(7000));
 
     let calls = backend.calls().borrow().clone();
-    let chunk_sizes: Vec<usize> = calls[mark..]
+    let chunk_sizes: Vec<(usize, bool)> = calls[mark..]
         .iter()
         .filter_map(|call| match call {
-            Call::WriteChunk { data, last, .. } => {
-                assert!(*last);
-                Some(data.len())
-            }
+            Call::WriteChunk { data, last, .. } => Some((data.len(), *last)),
             _ => None,
         })
         .collect();
-    assert_eq!(chunk_sizes, vec![3100, 3100, 796]);
-    assert_eq!(
-        backend.store(0).borrow().usercfg,
-        container[..6996].to_vec()
-    );
+    assert_eq!(chunk_sizes, vec![(3100, false), (3100, false), (800, true)]);
+    assert_eq!(backend.store(0).borrow().usercfg, container);
     assert!(calls[mark..].iter().any(|call| matches!(
         call,
         Call::Check { covered_len, .. } if *covered_len == 6994
@@ -818,7 +811,7 @@ fn write_commit_checksum_refusal_skips_flush() {
     let tail = &calls[mark..];
     assert!(!tail.iter().any(|call| matches!(call, Call::Flush { .. })));
     assert!(!tail.iter().any(|call| matches!(call, Call::Reboot)));
-    assert_eq!(backend.store(0).borrow().usercfg, vec![0xFF; 666]);
+    assert_eq!(backend.store(0).borrow().usercfg, vec![0xFF; 670]);
 
     let records = journal_records(directory.path());
     let check = records
@@ -897,7 +890,7 @@ fn write_commit_disconnect_journals_and_reopens_session() {
         .count();
     assert_eq!(opens, 2, "a protocol failure reopens a fresh session");
     assert!(!tail.iter().any(|call| matches!(call, Call::Flush { .. })));
-    assert_eq!(backend.store(0).borrow().usercfg, vec![0xFF; 666]);
+    assert_eq!(backend.store(0).borrow().usercfg, vec![0xFF; 670]);
     let records = journal_records(directory.path());
     let steps: Vec<&str> = records
         .iter()
@@ -1029,10 +1022,7 @@ fn restore_commit_writes_backup_and_reboots() {
     assert_eq!(exit, Exit(0), "{stderr}");
     let value: Value = serde_json::from_str(&stdout).expect("json");
     assert_eq!(value["commit"].as_bool(), Some(true));
-    assert_eq!(
-        backend.store(0).borrow().usercfg,
-        expected[..expected.len() - 4].to_vec()
-    );
+    assert_eq!(backend.store(0).borrow().usercfg, expected);
     let calls = backend.calls().borrow().clone();
     assert!(
         calls[mark..]
@@ -1858,4 +1848,72 @@ fn detect_prefers_a_harmony_over_another_logitech_device() {
     let value: Value = serde_json::from_str(&stdout).expect("json");
     assert_eq!(value["supported"].as_bool(), Some(true));
     assert_eq!(value["model"].as_str(), Some("Harmony 300"));
+}
+
+#[test]
+fn a_write_chunk_reply_is_read_at_the_sequence_offset() {
+    let mut reply = [0u8; REPORT_BYTES];
+    reply[0] = 0xFF;
+    reply[1] = 0x03;
+    reply[2] = 0xFE;
+    assert!(chunk_reply_matches(&reply, 0, true));
+
+    reply[2] = 0x80 | 5;
+    assert!(chunk_reply_matches(&reply, 5, false));
+
+    reply[0] = 0xFE;
+    reply[2] = 0xFE;
+    assert!(!chunk_reply_matches(&reply, 0, true));
+}
+
+struct ScriptedLink {
+    replies: VecDeque<[u8; REPORT_BYTES]>,
+}
+
+impl ReportLink for ScriptedLink {
+    fn send_report(&mut self, _report: &[u8; REPORT_BYTES]) -> Result<(), crate::error::Error> {
+        Ok(())
+    }
+
+    fn receive_report(&mut self) -> Result<[u8; REPORT_BYTES], crate::error::Error> {
+        self.replies
+            .pop_front()
+            .ok_or_else(|| crate::error::Error::Protocol("scripted link ran out of replies".into()))
+    }
+}
+
+#[test]
+fn a_read_accepts_a_flagged_data_packet_size() {
+    let mut replies = VecDeque::new();
+    let mut ack = [0u8; REPORT_BYTES];
+    ack[0] = 0xFF;
+    ack[1] = 0x04;
+    ack[2] = 0x80;
+    replies.push_back(ack);
+
+    let mut first = [0u8; REPORT_BYTES];
+    first[0] = 0x82;
+    first[1] = 0xBE;
+    for (index, byte) in first[2..].iter_mut().enumerate() {
+        *byte = index as u8;
+    }
+    replies.push_back(first);
+
+    let mut second = [0u8; REPORT_BYTES];
+    second[0] = 0x83;
+    second[1] = 0xA9;
+    for (index, byte) in second[2..2 + 41].iter_mut().enumerate() {
+        *byte = 0xA0 + index as u8;
+    }
+    replies.push_back(second);
+
+    let mut done = [0u8; REPORT_BYTES];
+    done[0] = 0xFE;
+    replies.push_back(done);
+
+    let mut protocol = FileProtocol::new(ScriptedLink { replies });
+    let data = protocol.read(0x06, 32).expect("flagged packet size");
+    assert_eq!(data.len(), 124);
+    assert_eq!(&data[..3], &[0, 1, 2]);
+    assert_eq!(&data[62..65], &[0xA0, 0xA1, 0xA2]);
 }

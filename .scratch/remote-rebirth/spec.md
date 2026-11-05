@@ -2,7 +2,7 @@
 
 Status: ready-for-agent
 Source: `.spec/remote-rebirth.md`
-Domain: `GLOSSARY.md`, `docs/adr/0001`–`0007`
+Domain: `GLOSSARY.md`, `docs/adr/0001`–`0009`
 
 ## Problem Statement
 
@@ -171,7 +171,7 @@ JSON goes to stdout; progress and diagnostics go to stderr. Every documented cod
 
 - Architecture 16 frame: `GSPM` at offset 0, absolute `end_addr` at 4, a 15-entry section table at `0x0B`, `LWJL` at `0x47`, the key table at `0x4B`, a seeded checksum at `end−6`, and `PTYY` at `end−4`. Addresses are absolute 24-bit flash addresses with base `0x020000`.
 - Checksum: 16-bit XOR of little-endian words, seed `0x4321`, over `[0, len−6)`. An odd trailing byte is not folded in.
-- `/cfg/usercfg` reports `end_addr − 0x020000`, so a read omits the four-byte `PTYY` marker. Backup appends it; Write appends it to the Read-Back before comparison. A read that is not a recognisable Container is stored raw and marked unreadable.
+- `/cfg/usercfg` reports `end_addr − 0x020000`, so a read omits the four-byte `PTYY` marker. Backup appends it; Write sends the whole Container including `PTYY` and appends it to the Read-Back before comparison. A read that is not a recognisable Container is stored raw and marked unreadable.
 - Maximum Container size is 256 KiB. Compose and Write reject anything larger before opening for writing.
 - Compose emits from scratch. The layout, section order, dense numbering, empty skeleton, and `0xFF` key-map entry follow the MIT-licensed harmony-explorations codec, the only known blueprint that rebuilds Logitech compiles byte-for-byte and builds an empty Configuration.
 - Every Configuration built from nothing binds firmware event `0xFF` to the action list called by the `0x30` entry. A Configuration that uses IR groups above 3 without that binding is rejected.
@@ -180,13 +180,13 @@ JSON goes to stdout; progress and diagnostics go to stderr. Every documented cod
 
 ### File protocol and Write
 
-- USB transport uses `hidapi` over hidraw: the kernel HID driver owns the interface, reports are 64 bytes, a write is a 65-byte buffer with a leading zero report ID that hidapi strips, and a read accepts 64 or 65 bytes with a 5 s timeout. The report size is confirmed against `/sys/sysinfo` and must be 64.
-- Requests use the file protocol header, big-endian parameters, and a sequence counter that runs 0–63 and wraps. Data packets carry up to 62 bytes; a chunk carries at most 50 data packets and ends with the `0x7E` done packet. The done packet consumes no sequence number.
+- USB transport uses `hidapi` with its libusb backend: hidapi claims interface 0 directly, reports are 64 bytes, a write is a 65-byte buffer with a leading zero report ID that hidapi strips, and a read accepts 64 or 65 bytes. Reads use a 40 s timeout because the open for writing erases before replying. A bare ping primes the session; its reply is not required. The report size is confirmed against `/sys/sysinfo` and must be 64.
+- Requests use the file protocol header, big-endian parameters, and a sequence counter that runs 0–63 and wraps. Data packets carry up to 62 bytes; a chunk carries at most 50 data packets. Only the final chunk carries the `0x7E` done packet, and the write request count includes the command and, on the final chunk, the done packet. The done packet consumes no sequence number. The chunk acknowledgement is `FF 03 <last sequence | 0x80>` and `FF 03 FE` on the final chunk.
 - Committed Write order: reset the filesystem, open `/cfg/usercfg` for writing, write chunks, request the checksum check, flush only when the reply is `m`, close, Read-Back, reboot unless `--no-reboot`.
 - Open for writing erases the configuration region before replying. All preconditions and the Journal's prepare record must complete before the reset or open is sent.
 - Preconditions: the Container parses as Architecture 16 with a present architecture record and valid checksum; its Skin matches the connected Remote; its Device count, IR-group count, and Favourite count fit the active Model Profile; the Backup exists and its sidecar matches; the Backup and Container model and Skin match the connected Remote; the Remote's current Configuration equals the Backup or is empty. Restore applies the same Container/Skin/profile checks and also refuses a sidecar whose validation is not `ok`, a deliberate safety extension.
 - The checksum check uses type `XOR`, seed `0x4321`, offset 0, length `len−6`, and the Container's stored checksum word. A reply other than `m` prevents the flush and reports that the Remote may be erased.
-- Read: the open reply carries the handle and the size; the first read report may repeat the request header; data packets carry sequence, size, and payload; the transfer ends on `0xFE`; the result is cut to the stated size. A short read is an error.
+- Read: the open reply carries the handle and the size; a read request asks for 32 reports; the reply may repeat the request header; data packets carry a sequence, a flagged size (clamped to 62), and a payload; the transfer ends on `0xFE` or after the requested reports, and the loop requests again until the stated size is reached; the result is cut to the stated size. A short read is an error.
 - A malformed packet poisons the session. Close the handle, reopen a fresh session, Journal the failure, and report. Do not retry the Write automatically.
 - A Read-Back mismatch skips the reboot, exits 6, and names the Backup and the `restore --backup <path> --commit` recovery command.
 - The CLI never opens firmware paths for writing. Only `/cfg/usercfg` is opened for writing.
@@ -295,7 +295,7 @@ JSON goes to stdout; progress and diagnostics go to stderr. Every documented cod
 - The reference states that no Write, commit, or device-control sequence has ever been sent to a Harmony 300; the sequence is inferred from Logitech's client and one firmware reading. The physical gate is the only proof.
 - The checksum check compares the stored trailer word. Whether the expected value must be sent big-endian is explicitly unchecked; the hardware gate covers it.
 - Open for writing erases the configuration region before replying. A timeout there leaves the Remote erased; the Journal must record the prepare step before the reset.
-- The reference also records a session-poisoning malformed packet and a 63-byte report wedge in hidapi. The chosen hidraw transport always presents a leading zero report ID and tolerates a 64- or 65-byte write; the fake Remote covers the poisoning behavior.
+- The reference also records a session-poisoning malformed packet and a 63-byte report wedge in hidapi. The chosen libusb transport always presents a leading zero report ID and tolerates a 64- or 65-byte write; the fake Remote covers the poisoning behavior.
 - The Harmony 300 and 350 share product ID `0xC124`; `bcdDevice` and `/sys/sysinfo` resolve the model and Skin. The Harmony 300's `bcdDevice` is `0x1078` even on Skin 79 units.
-- A connected Harmony 300 is available on the development machine (`046D:C124`, `bcdDevice 0x1078`). Opening it requires the documented udev rule; until the rule is installed, `detect` exits 3 with a permission error and the hardware gate remains pending.
+- The hardware gate was exercised on 2026-11-05 on a Harmony 300 (`046D:C124`, `bcdDevice 0x1078`, skin 79): `detect`, `backup`, `inspect`, `compose`, committed `write` with Read-Back, and `restore` pass. The IR bench remains manual because the verification model used synthetic Pronto pulses.
 - Local tracker: this spec is `.scratch/remote-rebirth/spec.md`. No tickets have been created yet.

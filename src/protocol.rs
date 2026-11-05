@@ -140,7 +140,7 @@ pub fn chunk_reply_matches(report: &[u8; REPORT_BYTES], last_sequence: u8, last:
     } else {
         CHUNK_REPLY_FLAG | (last_sequence & 0x3F)
     };
-    report[0] == expected
+    report[0] == 0xFF && report[1] == 0x03 && report[2] == expected
 }
 
 /// The byte-level link a [`FileProtocol`] speaks over: one 64-byte report each way.
@@ -167,9 +167,26 @@ impl<L: ReportLink> FileProtocol<L> {
         let sequence = self.sequence.take();
         let request = encode_request(command, sequence, params)?;
         self.link.send_report(&request)?;
-        let reply = self.link.receive_report()?;
-        validate_reply(&reply, command, sequence)?;
-        Ok(reply)
+        for _ in 0..64 {
+            let reply = self.link.receive_report()?;
+            if reply[0] != 0xFF || reply[1] != command {
+                // A stale reply from an earlier session, or an unsolicited report.
+                continue;
+            }
+            if reply[2] == 0xFF {
+                return Err(Error::Protocol(format!(
+                    "Remote refused command 0x{command:02X}"
+                )));
+            }
+            if reply[2] & 0x7F != sequence & 0x7F {
+                continue;
+            }
+            validate_reply(&reply, command, sequence)?;
+            return Ok(reply);
+        }
+        Err(Error::Protocol(format!(
+            "no reply matching command 0x{command:02X}"
+        )))
     }
 
     fn send_only(&mut self, command: u8, params: &[Param<'_>]) -> Result<(), Error> {
@@ -180,8 +197,10 @@ impl<L: ReportLink> FileProtocol<L> {
 }
 impl<L: ReportLink> RemoteSession for FileProtocol<L> {
     fn ping(&mut self) -> Result<(), Error> {
-        self.command(0x00, &[])?;
-        Ok(())
+        // The client opens every session with a bare ping, but the reply is not needed: the
+        // Harmony 300 can answer late or not at all, and the next command's matching loop skips
+        // any ping reply that does arrive. Sending it still consumes the first-request slot.
+        self.send_only(0x00, &[])
     }
 
     fn reset_filesystem(&mut self) -> Result<(), Error> {
@@ -203,35 +222,22 @@ impl<L: ReportLink> RemoteSession for FileProtocol<L> {
 
         let mut data = Vec::new();
         let mut reports = 0usize;
-        loop {
+        while reports < usize::from(packets) {
             let reply = self.link.receive_report()?;
             reports += 1;
-            if reports > 256 {
-                return Err(Error::Protocol(
-                    "read reply did not terminate within 256 reports".into(),
-                ));
-            }
             if reply[0] == 0xFF {
-                if reply[1] == 0x04 {
-                    continue;
-                }
                 if reply[2] == 0xFF {
                     return Err(Error::Protocol("Remote refused read".into()));
                 }
-                return Err(Error::Protocol(format!(
-                    "unexpected read reply 0x{:02X} 0x{:02X}",
-                    reply[0], reply[1]
-                )));
+                // A stale reply from an earlier command, or the read's own echo.
+                continue;
             }
             if reply[0] == 0xFE {
                 break;
             }
-            let size = reply[1] as usize;
-            if size > DATA_PACKET_PAYLOAD {
-                return Err(Error::Protocol(format!(
-                    "read packet declares {size} bytes"
-                )));
-            }
+            // The read size byte carries a flag in its high bits; the firmware's data packet
+            // length is the low six bits, and a final packet pads to the transfer unit.
+            let size = (reply[1] as usize).min(DATA_PACKET_PAYLOAD);
             data.extend_from_slice(&reply[2..2 + size]);
         }
         Ok(data)
@@ -281,8 +287,8 @@ impl<L: ReportLink> RemoteSession for FileProtocol<L> {
                 CHUNK_REPLY_FLAG | (last_sequence & 0x3F)
             };
             return Err(Error::Protocol(format!(
-                "unexpected write chunk reply 0x{:02X}, expected 0x{expected:02X}",
-                reply[0]
+                "unexpected write chunk reply 0x{:02X} 0x{:02X} 0x{:02X}, expected 0x{expected:02X}",
+                reply[0], reply[1], reply[2]
             )));
         }
         Ok(())

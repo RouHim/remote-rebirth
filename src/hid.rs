@@ -1,9 +1,8 @@
-//! The hidraw transport: the kernel HID driver owns the interface and hidapi moves 64-byte reports.
+//! The libusb HID transport: hidapi claims interface 0 directly and moves 64-byte reports.
 //!
-//! This replaces the raw nusb/libusb path after it timed out on a Harmony 300: the unit accepts
-//! reports through the kernel HID driver, which also performs the HID class setup. hidapi wants a
-//! leading report-id byte of zero on a write; the reference measured that byte as not part of the
-//! protocol, so it is stripped by hidapi and never reaches the Remote.
+//! The kernel `usbhid` driver refuses to bind this unit after the raw claim (`ENODEV`), so the
+//! hidraw backend cannot be used. hidapi's libusb backend does not need `usbhid`: it opens the
+//! interface, writes a 65-byte buffer with a leading zero report ID, and reads the 64-byte reply.
 
 use hidapi::{HidApi, HidDevice};
 
@@ -11,7 +10,7 @@ use crate::error::Error;
 use crate::protocol::{FileProtocol, REPORT_BYTES, ReportLink};
 use crate::transport::{RemoteBackend, RemoteDescriptor, RemoteSelector, RemoteSession};
 
-const READ_TIMEOUT_MS: i32 = 5_000;
+const READ_TIMEOUT_MS: i32 = 40_000;
 
 pub struct HidBackend;
 
@@ -67,12 +66,27 @@ impl RemoteBackend for HidBackend {
         let device = info
             .open_device(&api)
             .map_err(|error| Error::Device(format!("cannot open HID device: {error}")))?;
-        Ok(Box::new(FileProtocol::new(HidLink { device })))
+        let mut link = HidLink { device };
+        link.drain();
+        Ok(Box::new(FileProtocol::new(link)))
     }
 }
 
 struct HidLink {
     device: HidDevice,
+}
+
+impl HidLink {
+    /// Remove reports left queued by an earlier session before the first request is sent.
+    fn drain(&mut self) {
+        let mut buffer = [0u8; REPORT_BYTES + 1];
+        for _ in 0..64 {
+            match self.device.read_timeout(&mut buffer, 0) {
+                Ok(read) if read > 0 => {}
+                _ => break,
+            }
+        }
+    }
 }
 
 impl ReportLink for HidLink {

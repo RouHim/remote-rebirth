@@ -13,7 +13,9 @@ not depend on a Logitech account or service.
 cargo build --release
 ```
 
-The binary is `target/release/remote-rebirth`.
+The binary is `target/release/remote-rebirth`. The transport uses hidapi's libusb backend, so the build
+needs libusb's development files (`libusb` and `pkg-config` on Arch; `libusb-1.0-0-dev` and
+`pkg-config` on Debian/Ubuntu).
 
 ## USB permissions
 
@@ -26,9 +28,13 @@ sudo udevadm trigger
 ```
 
 The rule covers the USB device and its `hidraw` node and grants the `wheel` group access, so it works
-for local and headless/SSH sessions. Replace `wheel` with your group if needed. Reconnect the Remote
-after installing the rule; for an already-connected unit, a software re-authorise (`echo 0/1` to
-`/sys/bus/usb/devices/<port>/authorized`) re-enumerates it without physical access.
+for local and headless/SSH sessions. Replace `wheel` with your group if needed. The transport opens the
+USB device through libusb; the `hidraw` node is not required, and the rule's hidraw line is harmless.
+Reconnect the Remote after installing the rule; for an already-connected unit, a software re-authorise
+(`echo 0/1` to `/sys/bus/usb/devices/<port>/authorized`) re-enumerates it without physical access.
+
+After a committed `write` or `restore` reboots the Remote, wait for USB re-enumeration before the next
+command; the device node changes.
 
 ## Commands
 

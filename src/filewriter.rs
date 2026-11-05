@@ -30,15 +30,6 @@ pub fn plan(bytes: usize) -> WritePlan {
     }
 }
 
-/// The bytes the Remote stores for a Container: everything before `PTYY`.
-pub fn stored_bytes(container: &[u8]) -> &[u8] {
-    let trailer = container::END_MARKER.len();
-    if container.len() <= trailer {
-        return &[];
-    }
-    &container[..container.len() - trailer]
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Operation {
     Write,
@@ -76,7 +67,6 @@ pub fn execute(
     session: &mut dyn RemoteSession,
     journal: &mut Journal<'_>,
 ) -> Result<WritePlan, Error> {
-    let payload = stored_bytes(commit.container);
     let covered_len = commit.container.len().saturating_sub(6);
     let expected = container::stored_checksum(commit.container)
         .ok_or_else(|| Error::Validation("Container is shorter than its trailer".into()))?;
@@ -84,8 +74,8 @@ pub fn execute(
     session.reset_filesystem()?;
     journal.record("reset", 0, 0, "ok")?;
 
-    let handle = session.open_write(CONFIG_PATH, payload.len() as u32)?;
-    journal.record("open_write", 0, payload.len(), "ok")?;
+    let handle = session.open_write(CONFIG_PATH, commit.container.len() as u32)?;
+    journal.record("open_write", 0, commit.container.len(), "ok")?;
 
     let result = commit_chunks(commit, session, journal, handle, expected, covered_len);
     if result.is_err() {
@@ -104,11 +94,12 @@ fn commit_chunks(
     expected: u16,
     covered_len: usize,
 ) -> Result<WritePlan, Error> {
-    let payload = stored_bytes(commit.container);
-    let write_plan = plan(payload.len());
+    let write_plan = plan(commit.container.len());
+    let chunks: Vec<&[u8]> = commit.container.chunks(CHUNK_BYTES).collect();
     let mut offset = 0usize;
-    for chunk in payload.chunks(CHUNK_BYTES) {
-        session.write_chunk(handle, chunk, true)?;
+    for (index, chunk) in chunks.iter().enumerate() {
+        let last = index + 1 == chunks.len();
+        session.write_chunk(handle, chunk, last)?;
         journal.record("write", offset, chunk.len(), "done")?;
         offset += chunk.len();
     }

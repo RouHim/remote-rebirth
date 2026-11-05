@@ -14,11 +14,11 @@ Remote before treating the write path as proven.
 
 ## Read-only checks
 
-- [ ] `remote-rebirth detect --json` reports `supported: true`, `model: "Harmony 300"`,
+- [x] `remote-rebirth detect --json` reports `supported: true`, `model: "Harmony 300"`,
       `architecture: 16`, the expected `skin` (78 or 79), firmware version, and GUID.
-- [ ] `remote-rebirth backup --out /tmp/h300-backup.bin` writes the Container and sidecar.
-- [ ] The sidecar `validation` is `ok`; `size` and `sha256` match the file.
-- [ ] `remote-rebirth inspect --file /tmp/h300-backup.bin --json` parses without error and lists the
+- [x] `remote-rebirth backup --out /tmp/h300-backup.bin` writes the Container and sidecar.
+- [x] The sidecar `validation` is `ok`; `size` and `sha256` match the file.
+- [x] `remote-rebirth inspect --file /tmp/h300-backup.bin --json` parses without error and lists the
       Container metadata, Devices, key maps, Watch TV Activity, Favourites, and IR Records.
 
 ## Compose checks
@@ -27,16 +27,16 @@ Remote before treating the write path as proven.
       Favourite capacity composes without error.
 - [ ] `remote-rebirth inspect --file <composed.bin> --json` shows the declared Devices, keys,
       Activity, Favourites, and IR Records.
-- [ ] `remote-rebirth write --container <composed.bin> --backup /tmp/h300-backup.bin` (Dry Run)
+- [x] `remote-rebirth write --container <composed.bin> --backup /tmp/h300-backup.bin` (Dry Run)
       succeeds without erasing the Remote.
 - [ ] A model with duplicate Device Keys, an unsupported protocol, or too many Favourites is rejected
       before any write.
 
 ## Committed Write
 
-- [ ] `remote-rebirth write --container <composed.bin> --backup /tmp/h300-backup.bin --commit`
+- [x] `remote-rebirth write --container <composed.bin> --backup /tmp/h300-backup.bin --commit`
       completes; the Read-Back equals the written Container.
-- [ ] The Remote reboots (unless `--no-reboot`) and remains operational.
+- [x] The Remote reboots (unless `--no-reboot`) and remains operational.
 - [ ] Each Device Key selects its declared Device.
 - [ ] Every configured key sends its expected code to the bench receiver.
 - [ ] Watch TV switches the declared Devices on and selects their inputs.
@@ -44,9 +44,9 @@ Remote before treating the write path as proven.
 
 ## Restore
 
-- [ ] `remote-rebirth restore --backup /tmp/h300-backup.bin --commit` completes; the Read-Back equals
+- [x] `remote-rebirth restore --backup /tmp/h300-backup.bin --commit` completes; the Read-Back equals
       the Backup byte for byte.
-- [ ] The Remote remains operational after the restore.
+- [x] The Remote remains operational after the restore.
 
 ## Refusals and recovery
 
@@ -63,3 +63,29 @@ Remote before treating the write path as proven.
 
 Record the Remote's identity, firmware, skin, the Backup digest, the composed Container digest, and
 the result of each check. Attach the Journal tail for any failure.
+
+## Verification record
+
+Date: 2026-11-05. Unit: Harmony 300, USB `046D:C124`, `bcdDevice 0x1078`, skin 79, architecture 16,
+firmware 1.4.0, hardware 0.0. The original Configuration was 24725 bytes, SHA-256
+`d1b78d77dacf1e1c2dac124bb3b4a755d5a6d76bcc9b772e169fc73d9cbfa279`.
+
+- `detect`: passed, exit 0, `supported: true`, `model: "Harmony 300"`, skin 79.
+- `backup`: passed, 24725 bytes, sidecar `validation: ok`.
+- `inspect`: passed, parsed 15 slots, 1 Device, 0 Favourites.
+- `compose`: passed, 803 bytes, 1 Device, SHA-256
+  `1dc12d045d05534444f0c9e4c4962b1f67f76d0300c7b98784a8c37819f81a72`.
+- `write` Dry Run: passed, 803 bytes, 1 chunk, 13 data packets.
+- Committed `write`: first attempt failed at the chunk acknowledgement because the expected byte was
+  read at offset 0 instead of offset 2; the open had erased the Configuration. `restore` of the
+  24725-byte Backup recovered the unit and verified by Read-Back. After the correction the committed
+  `write` completed, verified its Read-Back, and rebooted. An independent `backup` of the written
+  Configuration was byte-identical to the composed Container.
+- `restore` of the original: completed, verified by Read-Back, and rebooted. An independent `backup`
+  was byte-identical to the original 24725-byte Backup.
+- The Remote re-enumerated after each reboot; a `backup` run during re-enumeration failed with "HID
+  device ... no longer connected", and the same command passed after four seconds.
+
+Not covered by this run: a physical IR bench (the verification model used synthetic Pronto pulses), a
+four-Device/full-Favourite compose, and the refusal cases that need induced protocol faults. The write,
+chunked-write, Read-Back, reboot, and Restore paths were exercised on hardware.

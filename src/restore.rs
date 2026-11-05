@@ -35,7 +35,7 @@ pub fn run(
     let profile = write::check_remote(&sysinfo, &sidecar)?;
     write::check_container(&parsed, &sysinfo, profile)?;
 
-    let write_plan = filewriter::plan(filewriter::stored_bytes(&backup).len());
+    let write_plan = filewriter::plan(backup.len());
 
     if !options.commit {
         write::report(
@@ -63,7 +63,7 @@ pub fn run(
         no_reboot: options.no_reboot,
     };
     let mut journal = Journal::create(state_dir, clock, "restore", backup_path, &sidecar.sha256)?;
-    journal.record("prepare", 0, filewriter::stored_bytes(&backup).len(), "ok")?;
+    journal.record("prepare", 0, backup.len(), "ok")?;
 
     tracing::info!("committed Restore starting");
     write::commit_container(backend, &descriptor, session, &mut journal, &commit)?;

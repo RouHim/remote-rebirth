@@ -1,5 +1,6 @@
 use crate::error::Error;
-use crate::protocol::DATA_PACKET_PAYLOAD;
+/// The reference's read request size: the reply's header report is part of the budget.
+const READ_PACKETS: u16 = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteDescriptor {
@@ -51,9 +52,10 @@ pub fn read_file(session: &mut dyn RemoteSession, path: &str) -> Result<Vec<u8>,
     let mut data = Vec::with_capacity(expected);
     let read_result = (|| {
         while data.len() < expected {
-            let remaining = expected - data.len();
-            let packets = remaining.div_ceil(DATA_PACKET_PAYLOAD).min(32) as u16;
-            let chunk = session.read(handle, packets)?;
+            // The reference asks for 32 packets per request. The Remote's reply includes one
+            // header report, so a request sized to the exact remainder would stop one packet
+            // short of the terminator.
+            let chunk = session.read(handle, READ_PACKETS)?;
             if chunk.is_empty() {
                 break;
             }

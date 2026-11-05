@@ -63,7 +63,7 @@ pub fn run(
         )));
     }
 
-    let write_plan = filewriter::plan(filewriter::stored_bytes(&container).len());
+    let write_plan = filewriter::plan(container.len());
 
     if !options.commit {
         report(
@@ -92,12 +92,7 @@ pub fn run(
     };
     tracing::info!("committed Write starting");
     let mut journal = Journal::create(state_dir, clock, "write", backup_path, &sidecar.sha256)?;
-    journal.record(
-        "prepare",
-        0,
-        filewriter::stored_bytes(&container).len(),
-        "ok",
-    )?;
+    journal.record("prepare", 0, container.len(), "ok")?;
 
     commit_container(backend, &descriptor, session, &mut journal, &commit)?;
     tracing::info!("committed Write finished and verified");
