@@ -34,46 +34,60 @@ pub enum Selected {
 
 /// Select the single Logitech device and, when it is a Harmony, open it and read `/sys/sysinfo`.
 pub fn select(backend: &mut dyn RemoteBackend) -> Result<Selected, Error> {
-    let mut devices: Vec<RemoteDescriptor> = backend
+    let logitech: Vec<RemoteDescriptor> = backend
         .list()?
         .into_iter()
         .filter(|device| device.vendor_id == LOGITECH_VENDOR_ID)
         .collect();
-
-    match devices.len() {
-        0 => Err(Error::Device(
+    if logitech.is_empty() {
+        return Err(Error::Device(
             "no Harmony Remote found; connect a Harmony 300 and retry".into(),
-        )),
-        1 => {
-            let descriptor = devices
-                .pop()
-                .ok_or_else(|| Error::Device("no Logitech device found".into()))?;
-            if is_harmony(&descriptor) {
-                open(backend, descriptor).map(Selected::Harmony)
-            } else {
-                Ok(Selected::Other(descriptor))
-            }
-        }
-        _ => {
-            let list = devices
-                .iter()
-                .map(|device| {
-                    format!(
-                        "bus {} address {} ({}, vendor 0x{:04X}, product 0x{:04X})",
-                        device.bus,
-                        device.address,
-                        device.product.as_deref().unwrap_or("unknown product"),
-                        device.vendor_id,
-                        device.product_id
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            Err(Error::Device(format!(
-                "multiple Logitech devices found: {list}; disconnect all but one"
-            )))
-        }
+        ));
     }
+
+    let mut harmony: Vec<RemoteDescriptor> = logitech
+        .iter()
+        .filter(|device| is_harmony(device))
+        .cloned()
+        .collect();
+    match harmony.len() {
+        0 if logitech.len() == 1 => {
+            Ok(Selected::Other(logitech.into_iter().next().ok_or_else(
+                || Error::Device("no Logitech device found".into()),
+            )?))
+        }
+        0 => Err(Error::Device(format!(
+            "multiple Logitech devices found, none is a Harmony Remote: {}; disconnect all but one",
+            describe(&logitech)
+        ))),
+        1 => {
+            let descriptor = harmony
+                .pop()
+                .ok_or_else(|| Error::Device("no Harmony Remote found".into()))?;
+            open(backend, descriptor).map(Selected::Harmony)
+        }
+        _ => Err(Error::Device(format!(
+            "multiple Harmony Remotes found: {}; disconnect all but one",
+            describe(&harmony)
+        ))),
+    }
+}
+
+fn describe(devices: &[RemoteDescriptor]) -> String {
+    devices
+        .iter()
+        .map(|device| {
+            format!(
+                "bus {} address {} ({}, vendor 0x{:04X}, product 0x{:04X})",
+                device.bus,
+                device.address,
+                device.product.as_deref().unwrap_or("unknown product"),
+                device.vendor_id,
+                device.product_id
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Open the connected Harmony, refusing anything that is not one.

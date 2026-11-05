@@ -186,7 +186,7 @@ fn detect_with_multiple_remotes_exits_3() {
     assert_eq!(exit, Exit(3));
     assert!(stdout.is_empty());
     assert!(
-        stderr.contains("multiple Logitech devices found"),
+        stderr.contains("multiple Harmony Remotes found"),
         "{stderr}"
     );
 }
@@ -1835,4 +1835,26 @@ fn write_reports_a_combined_error_when_recovery_fails() {
             .and_then(|record| record["reply"].as_str()),
         Some("failed")
     );
+}
+
+#[test]
+fn detect_prefers_a_harmony_over_another_logitech_device() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let mut mouse = FakeDevice {
+        descriptor: descriptor(1, 6, 0xC077, 0x0100, "USB Optical Mouse"),
+        sysinfo: Vec::new(),
+        usercfg: Vec::new(),
+    };
+    mouse.descriptor.vendor_id = 0x046D;
+    let (exit, stdout, stderr) = run_with(
+        vec![device(79, 0x1078, 0xC124), mouse],
+        &["detect", "--json"],
+        directory.path(),
+    );
+
+    assert_eq!(exit, Exit(0));
+    assert!(stderr.is_empty(), "{stderr}");
+    let value: Value = serde_json::from_str(&stdout).expect("json");
+    assert_eq!(value["supported"].as_bool(), Some(true));
+    assert_eq!(value["model"].as_str(), Some("Harmony 300"));
 }
