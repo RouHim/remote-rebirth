@@ -8,6 +8,7 @@ mod error;
 mod fake;
 mod filewriter;
 mod journal;
+mod model;
 mod paths;
 mod profile;
 mod protocol;

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://remote-rebirth.local/schema/backup-v1.json",
+  "title": "Remote Rebirth Backup sidecar",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "file",
+    "model",
+    "size",
+    "sha256",
+    "timestamp",
+    "validation"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "file": { "type": "string", "minLength": 1 },
+    "model": { "type": "string", "minLength": 1 },
+    "skin": { "type": ["integer", "null"] },
+    "architecture": { "type": ["integer", "null"] },
+    "firmware_version": { "type": ["string", "null"] },
+    "guid": { "type": ["string", "null"] },
+    "serial": { "type": ["string", "null"] },
+    "size": { "type": "integer", "minimum": 0 },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "validation": { "enum": ["ok", "checksum_mismatch", "unreadable"] }
+  }
+}

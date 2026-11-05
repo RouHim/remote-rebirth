@@ -1063,3 +1063,119 @@ fn write_plan_covers_chunk_and_sequence_boundaries() {
     assert_eq!(values[127], 63);
     assert_eq!(values[128], 0);
 }
+
+fn valid_model() -> crate::model::Model {
+    serde_json::from_value(serde_json::json!({
+        "schema_version": 1,
+        "profile": "harmony_300",
+        "skin": 79,
+        "devices": [{
+            "name": "TV",
+            "device_key": 1,
+            "commands": {
+                "power": { "source": { "format": "pronto", "hex": "0000 006D 0002 0000 0020 0020 0020 0020" } },
+                "input": { "source": { "format": "pronto", "hex": "0000 006D 0002 0000 0020 0020 0020 0020" } }
+            },
+            "keys": { "power": "power", "input": "input" }
+        }],
+        "activity": {
+            "channel_device": "TV",
+            "steps": [{ "device": "TV", "power": "power", "input": "input" }]
+        },
+        "favourites": [{ "key": 1, "channel": "101" }]
+    }))
+    .expect("valid model")
+}
+
+#[test]
+fn model_accepts_valid_harmony_300_model() {
+    let model = valid_model();
+    crate::model::validate(&model, &crate::profile::HARMONY_300).expect("valid");
+    assert_eq!(model.activity.steps[0].delay_ms, 500);
+}
+
+#[test]
+fn model_rejects_duplicate_device_keys() {
+    let mut model = valid_model();
+    let mut second = model.devices[0].clone();
+    second.name = "Cable".into();
+    model.devices.push(second);
+    let error =
+        crate::model::validate(&model, &crate::profile::HARMONY_300).expect_err("duplicate");
+    assert!(error.to_string().contains("device key 1"));
+}
+
+#[test]
+fn model_rejects_unreferenced_command() {
+    let mut model = valid_model();
+    model.devices[0].commands.insert(
+        "unused".into(),
+        serde_json::from_value(serde_json::json!({
+            "source": { "format": "pronto", "hex": "0000 006D 0002 0000 0020 0020 0020 0020" }
+        }))
+        .expect("command"),
+    );
+    let error = crate::model::validate(&model, &crate::profile::HARMONY_300).expect_err("unused");
+    assert!(error.to_string().contains("not referenced"));
+}
+
+#[test]
+fn model_rejects_leading_zero_favourite() {
+    let mut model = valid_model();
+    model.favourites[0].channel = "01".into();
+    let error = crate::model::validate(&model, &crate::profile::HARMONY_300).expect_err("channel");
+    assert!(error.to_string().contains("leading zero"));
+}
+
+#[test]
+fn model_rejects_five_favourites_on_skin_79() {
+    let mut model = valid_model();
+    model.favourites = (1..=5)
+        .map(|key| crate::model::Favourite {
+            key,
+            channel: format!("10{key}"),
+        })
+        .collect();
+    let error = crate::model::validate(&model, &crate::profile::HARMONY_300).expect_err("capacity");
+    assert!(error.to_string().contains("skin 79 accepts 4"));
+}
+
+#[test]
+fn model_rejects_lirc_without_button() {
+    let mut model = valid_model();
+    model.devices[0]
+        .commands
+        .get_mut("power")
+        .expect("power")
+        .source = serde_json::from_value(serde_json::json!({
+        "format": "lirc",
+        "file": "tv.conf",
+        "remote": "TV"
+    }))
+    .expect("source");
+    let error = crate::model::validate(&model, &crate::profile::HARMONY_300).expect_err("lirc");
+    assert!(error.to_string().contains("remote and button"));
+}
+
+#[test]
+fn model_rejects_unknown_key() {
+    let mut model = valid_model();
+    model.devices[0]
+        .keys
+        .insert("unknown_key".into(), "power".into());
+    let error = crate::model::validate(&model, &crate::profile::HARMONY_300).expect_err("key");
+    assert!(error.to_string().contains("unknown key"));
+}
+
+#[test]
+fn model_rejects_unknown_json_field() {
+    let value = serde_json::json!({
+        "schema_version": 1,
+        "profile": "harmony_300",
+        "skin": 79,
+        "devices": [],
+        "activity": { "channel_device": "TV", "steps": [] },
+        "unexpected": true
+    });
+    assert!(serde_json::from_value::<crate::model::Model>(value).is_err());
+}
