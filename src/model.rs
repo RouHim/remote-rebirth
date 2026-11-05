@@ -16,7 +16,7 @@ pub struct Model {
     pub skin: u8,
     pub devices: Vec<Device>,
     pub activity: Activity,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub favourites: Vec<Favourite>,
 }
 
@@ -26,7 +26,7 @@ pub struct Device {
     pub name: String,
     pub device_key: u8,
     pub commands: BTreeMap<String, Command>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub keys: BTreeMap<String, String>,
 }
 
@@ -34,7 +34,7 @@ pub struct Device {
 #[serde(deny_unknown_fields)]
 pub struct Command {
     pub source: IrSource,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sends: Option<u8>,
 }
 
@@ -42,15 +42,15 @@ pub struct Command {
 #[serde(deny_unknown_fields)]
 pub struct IrSource {
     pub format: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file: Option<PathBuf>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hex: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub button: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
 }
 
@@ -65,9 +65,9 @@ pub struct Activity {
 #[serde(deny_unknown_fields)]
 pub struct ActivityStep {
     pub device: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub power: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input: Option<String>,
     #[serde(default = "default_delay_ms")]
     pub delay_ms: u32,

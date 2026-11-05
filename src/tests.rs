@@ -1064,8 +1064,8 @@ fn write_plan_covers_chunk_and_sequence_boundaries() {
     assert_eq!(values[128], 0);
 }
 
-fn valid_model() -> crate::model::Model {
-    serde_json::from_value(serde_json::json!({
+fn valid_model_json() -> Value {
+    serde_json::json!({
         "schema_version": 1,
         "profile": "harmony_300",
         "skin": 79,
@@ -1083,8 +1083,11 @@ fn valid_model() -> crate::model::Model {
             "steps": [{ "device": "TV", "power": "power", "input": "input" }]
         },
         "favourites": [{ "key": 1, "channel": "101" }]
-    }))
-    .expect("valid model")
+    })
+}
+
+fn valid_model() -> crate::model::Model {
+    serde_json::from_value(valid_model_json()).expect("valid model")
 }
 
 #[test]
@@ -1178,4 +1181,39 @@ fn model_rejects_unknown_json_field() {
         "unexpected": true
     });
     assert!(serde_json::from_value::<crate::model::Model>(value).is_err());
+}
+
+
+#[test]
+fn model_json_validates_against_published_schema() {
+    let schema: Value =
+        serde_json::from_str(include_str!("../schema/model-v1.json")).expect("schema");
+    let validator = jsonschema::validator_for(&schema).expect("compile schema");
+    validator
+        .validate(&valid_model_json())
+        .expect("input model validates");
+    let serialized = serde_json::to_value(valid_model()).expect("serialize model");
+    validator
+        .validate(&serialized)
+        .expect("serialized model validates");
+}
+
+#[test]
+fn backup_sidecar_validates_against_published_schema() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let out = directory.path().join("backup.bin");
+    let (exit, _stdout, stderr) = run_with(
+        vec![device(79, 0x1078, 0xC124)],
+        &["backup", "--out", out.to_str().expect("path")],
+        directory.path(),
+    );
+    assert_eq!(exit, Exit(0));
+    assert!(stderr.is_empty(), "{stderr}");
+    let sidecar_path = PathBuf::from(format!("{}.json", out.display()));
+    let sidecar: Value =
+        serde_json::from_slice(&std::fs::read(&sidecar_path).expect("sidecar")).expect("json");
+    let schema: Value =
+        serde_json::from_str(include_str!("../schema/backup-v1.json")).expect("schema");
+    let validator = jsonschema::validator_for(&schema).expect("compile schema");
+    validator.validate(&sidecar).expect("sidecar validates");
 }
