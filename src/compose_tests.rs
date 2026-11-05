@@ -197,10 +197,9 @@ fn compose_writes_a_checksummed_architecture_16_container() {
         crate::container::validation_status(&bytes),
         ValidationStatus::Ok
     );
-    assert!(
-        bytes.len() > 670,
-        "a composed Container holds more than the empty one"
-    );
+    // A golden length: this project's own Compose output for the two-Device model, the shape the
+    // spec says to keep a fixture of.
+    assert_eq!(bytes.len(), 1796, "the composed Container's size");
     assert!(bytes.len() < MAX_CONTAINER_SIZE);
 
     // The same model at the same moment is one file.
