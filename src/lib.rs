@@ -6,14 +6,18 @@ mod detect;
 mod error;
 #[cfg(test)]
 mod fake;
+mod filewriter;
+mod journal;
 mod model;
 mod paths;
 mod profile;
 mod protocol;
+mod restore;
 mod runtime;
 mod sysinfo;
 mod transport;
 mod usb;
+mod write;
 
 #[cfg(test)]
 mod tests;

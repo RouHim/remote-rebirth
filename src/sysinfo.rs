@@ -67,10 +67,7 @@ fn split_line(line: &str) -> (&str, &str) {
 }
 
 fn normalize_key(key: &str) -> String {
-    key.trim()
-        .to_ascii_lowercase()
-        .replace('-', "_")
-        .replace(' ', "_")
+    key.trim().to_ascii_lowercase().replace(['-', ' '], "_")
 }
 
 fn parse_u8(value: &str) -> Option<u8> {
@@ -83,7 +80,10 @@ fn parse_u16(value: &str) -> Option<u16> {
 
 fn parse_u64(value: &str) -> Option<u64> {
     let value = value.trim();
-    if let Some(hex) = value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")) {
+    if let Some(hex) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
         u64::from_str_radix(hex, 16).ok()
     } else {
         value.parse().ok()
