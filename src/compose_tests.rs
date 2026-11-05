@@ -586,6 +586,59 @@ fn compose_composes_five_favourites_for_skin_78() {
 }
 
 #[test]
+fn compose_imports_a_file_source_relative_to_the_model() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir(directory.path().join("irs")).expect("irs directory");
+    std::fs::write(
+        directory.path().join("irs/tv.conf"),
+        "begin remote\n  name TV\n  flags SPACE_ENC\n  header 9000 4500\n  one 560 1690\n  zero 560 560\n  bits 32\n  frequency 38000\n  begin codes\n    Input 0x20DF40BF\n  end codes\nend remote\n",
+    )
+    .expect("lirc file");
+    let model = write_model(
+        directory.path(),
+        &json!({
+            "schema_version": 1,
+            "profile": "harmony_300",
+            "skin": 79,
+            "devices": [{
+                "name": "TV",
+                "device_key": 1,
+                "commands": {
+                    "power": { "source": { "format": "pronto", "hex": RAW_TV_POWER } },
+                    "input": { "source": { "format": "lirc", "file": "irs/tv.conf", "remote": "TV", "button": "Input" } }
+                },
+                "keys": { "power": "power", "input": "input" }
+            }],
+            "activity": {
+                "channel_device": "TV",
+                "steps": [{ "device": "TV", "power": "power", "input": "input" }]
+            }
+        }),
+    );
+    let out = directory.path().join("container.bin");
+    let (exit, _, stderr) = compose(&model, &out, &[]);
+    assert_eq!(exit, Exit(0), "{stderr}");
+    inspect_json(&out);
+
+    let resolved: Value =
+        serde_json::from_slice(&std::fs::read(sidecar(&out)).expect("sidecar")).expect("json");
+    let input = &resolved["devices"][0]["commands"]["input"];
+    assert_eq!(input["provenance"]["format"].as_str(), Some("lirc"));
+    assert_eq!(input["provenance"]["protocol"].as_str(), Some("NEC"));
+    assert_eq!(input["provenance"]["sends"].as_u64(), Some(3));
+    assert!(
+        input["provenance"]["path"]
+            .as_str()
+            .is_some_and(|path| path.ends_with("irs/tv.conf")),
+        "the resolved path names the file beside the model"
+    );
+    assert_eq!(
+        input["provenance"]["selector"].as_str(),
+        Some("remote=TV button=Input")
+    );
+}
+
+#[test]
 fn compose_refuses_a_key_the_profile_cannot_bind() {
     let directory = tempfile::tempdir().expect("tempdir");
     let mut model = two_device_model(79, false);
