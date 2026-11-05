@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 use crate::backup;
+use crate::compose;
 use crate::detect;
 use crate::error::{Error, Exit};
 use crate::restore;
@@ -123,7 +124,12 @@ fn dispatch(command: Command, runtime: &mut Runtime<'_>) -> Result<(), Error> {
             json,
             print_schema,
         } => crate::inspect::run(file.as_deref(), json, print_schema, &mut **stdout),
-        Command::Compose { .. } => Err(Error::Internal("compose is not implemented yet".into())),
+        Command::Compose {
+            model,
+            out,
+            overwrite,
+            json,
+        } => compose::run(&**clock, &model, &out, overwrite, json, &mut **stdout),
         Command::Write {
             container,
             backup,

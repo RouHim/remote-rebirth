@@ -1183,7 +1183,6 @@ fn model_rejects_unknown_json_field() {
     assert!(serde_json::from_value::<crate::model::Model>(value).is_err());
 }
 
-
 #[test]
 fn model_json_validates_against_published_schema() {
     let schema: Value =
