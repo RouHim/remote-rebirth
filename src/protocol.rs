@@ -2,7 +2,9 @@ use crate::error::Error;
 use crate::transport::OpenRead;
 
 pub const REPORT_BYTES: usize = 64;
+#[allow(dead_code)] // used by the write slice
 pub const DATA_PACKET_PAYLOAD: usize = 62;
+#[allow(dead_code)] // used by the write slice
 pub const SEQUENCE_MODULUS: u8 = 64;
 pub const DONE_PACKET: u8 = 0x7E;
 pub const CHUNK_REPLY_FLAG: u8 = 0x80;
@@ -74,11 +76,7 @@ fn ensure_capacity(at: usize, needed: usize) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn validate_reply(
-    report: &[u8; REPORT_BYTES],
-    command: u8,
-    sequence: u8,
-) -> Result<(), Error> {
+pub fn validate_reply(report: &[u8; REPORT_BYTES], command: u8, sequence: u8) -> Result<(), Error> {
     if report[0] != 0xFF {
         return Err(Error::Protocol(format!(
             "reply does not start with 0xFF: 0x{:02X}",

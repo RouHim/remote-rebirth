@@ -35,7 +35,7 @@ enum Command {
     },
     Inspect {
         #[arg(long)]
-        file: PathBuf,
+        file: Option<PathBuf>,
         #[arg(long)]
         json: bool,
         #[arg(long)]
@@ -116,7 +116,11 @@ fn dispatch(command: Command, runtime: &mut Runtime<'_>) -> Result<(), Error> {
             json,
             &mut **stdout,
         ),
-        Command::Inspect { .. } => Err(Error::Internal("inspect is not implemented yet".into())),
+        Command::Inspect {
+            file,
+            json,
+            print_schema,
+        } => crate::inspect::run(file.as_deref(), json, print_schema, &mut **stdout),
         Command::Compose { .. } => Err(Error::Internal("compose is not implemented yet".into())),
         Command::Write { .. } => Err(Error::Internal("write is not implemented yet".into())),
         Command::Restore { .. } => Err(Error::Internal("restore is not implemented yet".into())),

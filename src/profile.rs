@@ -60,6 +60,7 @@ pub fn recognized_model(architecture: Option<u8>, skin: Option<u8>) -> Option<&'
     }
 }
 
+#[allow(dead_code)] // used by the compose slice
 pub fn skin_profile(profile: &ModelProfile, skin: u8) -> Option<&SkinProfile> {
     profile.skins.iter().find(|entry| entry.skin == skin)
 }

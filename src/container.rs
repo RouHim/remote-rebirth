@@ -48,8 +48,9 @@ pub fn trailer_checksum(bytes: &[u8]) -> Result<u16, Error> {
         ));
     }
     let mut accumulator = 0x4321u16;
-    for word in bytes[..bytes.len() - 6].chunks_exact(2) {
-        accumulator ^= u16::from_le_bytes([word[0], word[1]]);
+    let (words, _) = bytes[..bytes.len() - 6].as_chunks::<2>();
+    for word in words {
+        accumulator ^= u16::from_le_bytes(*word);
     }
     Ok(accumulator)
 }

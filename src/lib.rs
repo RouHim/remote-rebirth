@@ -6,6 +6,10 @@ mod detect;
 mod error;
 #[cfg(test)]
 mod fake;
+mod inspect;
+mod inspect_container;
+#[cfg(test)]
+mod inspect_tests;
 mod paths;
 mod profile;
 mod protocol;
