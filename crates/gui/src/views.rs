@@ -1787,6 +1787,7 @@ fn command_index(app: &App) -> Element<'_, Message> {
         .align_y(Alignment::Center),
         text_input("Search the index", &app.command_filter)
             .on_input(Message::CommandFilter)
+            .on_submit(Message::AssignFirstCommand)
             .padding(5)
             .size(10)
             .font(t::sans(Weight::Normal))
@@ -2107,7 +2108,25 @@ fn settings_page(app: &App) -> Element<'_, Message> {
         .spacing(6)
         .into(),
     );
-    let left = column![display, about].spacing(18).width(Fill);
+    let keyboard = section(
+        "Keyboard",
+        Some("SHORTCUTS"),
+        column![
+            shortcut_row("Ctrl+1…6", "Chapters"),
+            shortcut_row("Ctrl+PageUp/PageDown", "Previous or next chapter"),
+            shortcut_row("Ctrl+B", "Back up now"),
+            shortcut_row("Ctrl+R", "Review update"),
+            shortcut_row("Ctrl+F", "Find remote"),
+            shortcut_row("Ctrl+Enter", "Assign the first matching command"),
+            shortcut_row("Ctrl+Alt+←/→", "Previous or next device"),
+            shortcut_row("Ctrl+Alt+↑/↓", "Previous or next key"),
+            shortcut_row("Ctrl+Alt+Backspace", "Clear the selected key"),
+            shortcut_row("Esc", "Dismiss the error or clear the selection"),
+        ]
+        .spacing(5)
+        .into(),
+    );
+    let left = column![display, about, keyboard].spacing(18).width(Fill);
 
     let right: Element<'_, Message> = if app.advanced {
         column![
@@ -2286,6 +2305,22 @@ fn field<'a>(label: &'a str, control: Element<'a, Message>) -> Element<'a, Messa
     ]
     .spacing(3)
     .width(Fill)
+    .into()
+}
+
+fn shortcut_row(keys: &'static str, action: &'static str) -> Element<'static, Message> {
+    row![
+        text(keys)
+            .font(t::mono(Weight::Medium))
+            .size(8.5)
+            .color(t::OXIDE_DARK)
+            .width(Length::Fixed(132.0)),
+        text(action)
+            .font(t::sans(Weight::Normal))
+            .size(10.5)
+            .color(t::INK),
+    ]
+    .spacing(8)
     .into()
 }
 

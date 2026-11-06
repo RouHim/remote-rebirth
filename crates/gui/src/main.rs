@@ -13,8 +13,9 @@ use std::sync::{
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use iced::futures::StreamExt;
+use iced::keyboard::{Key, Modifiers, key::Named};
 use iced::task::{Straw, sipper};
-use iced::{Color, Element, Size, Task, Theme};
+use iced::{Color, Element, Size, Subscription, Task, Theme};
 use remote_rebirth_core::gui_api::{self, BackupResult, DetectReport, WriteResult};
 use remote_rebirth_core::model::{
     ActivityStep, Command, Device, Favourite, IrSource, Model, Routing, SCHEMA_VERSION,
@@ -29,6 +30,7 @@ fn main() -> iced::Result {
     iced::application(App::new, App::update, App::view)
         .title("Remote Rebirth")
         .theme(App::theme)
+        .subscription(App::subscription)
         .font(include_bytes!("../assets/fonts/PublicSans-Regular.ttf").as_slice())
         .font(include_bytes!("../assets/fonts/PublicSans-Medium.ttf").as_slice())
         .font(include_bytes!("../assets/fonts/PublicSans-SemiBold.ttf").as_slice())
@@ -84,6 +86,7 @@ enum OpDone {
 #[derive(Debug, Clone)]
 enum Message {
     Page(Page),
+    Shortcut(Key, Modifiers),
     Detect,
     Backup,
     Compose,
@@ -105,6 +108,7 @@ enum Message {
     ClearKey,
     CommandFilter(String),
     AssignCommand(String),
+    AssignFirstCommand,
     NewCommandName(String),
     NewCommandFormat(String),
     NewCommandFile(String),
@@ -382,6 +386,15 @@ impl App {
         )
     }
 
+    fn subscription(&self) -> Subscription<Message> {
+        iced::keyboard::listen().filter_map(|event| match event {
+            iced::keyboard::Event::KeyPressed { key, modifiers, .. } => {
+                Some(Message::Shortcut(key, modifiers))
+            }
+            _ => None,
+        })
+    }
+
     fn update(&mut self, message: Message) -> Task<Message> {
         let operation_message = matches!(
             &message,
@@ -391,6 +404,7 @@ impl App {
             return Task::none();
         }
         match message {
+            Message::Shortcut(key, modifiers) => self.shortcut(key, modifiers),
             Message::Page(page) => {
                 self.page = page;
                 self.save_gui_state();
@@ -753,6 +767,7 @@ impl App {
                 self.command_filter = filter;
                 Task::none()
             }
+            Message::AssignFirstCommand => self.assign_first_command(),
             Message::AssignCommand(command) => {
                 if let Some(key) = self.selected_key.clone() {
                     let routed = self
@@ -1125,6 +1140,135 @@ impl App {
                 self.error = None;
                 Task::none()
             }
+        }
+    }
+
+    fn shortcut(&mut self, key: Key, modifiers: Modifiers) -> Task<Message> {
+        let key = key.as_ref();
+
+        if modifiers.control() && modifiers.alt() {
+            match key {
+                Key::Named(Named::ArrowLeft) => self.select_relative_device(-1),
+                Key::Named(Named::ArrowRight) => self.select_relative_device(1),
+                Key::Named(Named::ArrowUp) => self.select_relative_key(-1),
+                Key::Named(Named::ArrowDown) => self.select_relative_key(1),
+                Key::Named(Named::Backspace) => {
+                    self.selected_key = None;
+                    self.save_gui_state();
+                }
+                _ => {}
+            }
+            return Task::none();
+        }
+
+        if modifiers.control() {
+            match key {
+                Key::Character("1") => self.set_page(Page::Remote),
+                Key::Character("2") => self.set_page(Page::Devices),
+                Key::Character("3") => self.set_page(Page::KeyMap),
+                Key::Character("4") => self.set_page(Page::Activities),
+                Key::Character("5") => self.set_page(Page::Favourites),
+                Key::Character("6") => self.set_page(Page::Settings),
+                Key::Character("b") | Key::Character("B") => {
+                    return self.update(Message::Backup);
+                }
+                Key::Character("r") | Key::Character("R") => {
+                    if self.validation().is_none() {
+                        return self.update(Message::PrepareWrite);
+                    }
+                }
+                Key::Character("f") | Key::Character("F") => {
+                    return self.update(Message::Detect);
+                }
+                Key::Named(Named::Enter) => {
+                    if self.page == Page::KeyMap {
+                        return self.assign_first_command();
+                    }
+                }
+                Key::Named(Named::PageUp) => self.cycle_page(-1),
+                Key::Named(Named::PageDown) => self.cycle_page(1),
+                _ => {}
+            }
+            return Task::none();
+        }
+
+        if matches!(key, Key::Named(Named::Escape))
+            && self.error.take().is_none()
+            && self.selected_key.take().is_some()
+        {
+            self.save_gui_state();
+        }
+        Task::none()
+    }
+
+    fn set_page(&mut self, page: Page) {
+        self.page = page;
+        self.save_gui_state();
+    }
+
+    fn cycle_page(&mut self, delta: isize) {
+        const PAGES: [Page; 6] = [
+            Page::Remote,
+            Page::Devices,
+            Page::KeyMap,
+            Page::Activities,
+            Page::Favourites,
+            Page::Settings,
+        ];
+        let index = PAGES
+            .iter()
+            .position(|page| *page == self.page)
+            .unwrap_or(0);
+        let next = (index as isize + delta).rem_euclid(PAGES.len() as isize) as usize;
+        self.set_page(PAGES[next]);
+    }
+
+    fn select_relative_device(&mut self, delta: isize) {
+        if self.model.devices.is_empty() {
+            return;
+        }
+        let len = self.model.devices.len() as isize;
+        let next = (self.selected_device as isize + delta).rem_euclid(len) as usize;
+        self.selected_device = next;
+        self.selected_key = None;
+        self.sync_device_name_draft();
+        self.save_gui_state();
+    }
+
+    fn select_relative_key(&mut self, delta: isize) {
+        let keys: Vec<&str> = profile::HARMONY_300
+            .key_layout
+            .iter()
+            .map(|binding| binding.name)
+            .collect();
+        if keys.is_empty() {
+            return;
+        }
+        let current = self
+            .selected_key
+            .as_deref()
+            .and_then(|selected| keys.iter().position(|key| *key == selected))
+            .unwrap_or(0) as isize;
+        let next = (current + delta).rem_euclid(keys.len() as isize) as usize;
+        self.selected_key = Some(keys[next].to_string());
+        self.save_gui_state();
+    }
+
+    fn assign_first_command(&mut self) -> Task<Message> {
+        if self.selected_key.is_none() {
+            return Task::none();
+        }
+        let filter = self.command_filter.to_lowercase();
+        let command = self.selected_device().and_then(|device| {
+            device
+                .commands
+                .keys()
+                .find(|name| filter.is_empty() || name.to_lowercase().contains(&filter))
+                .cloned()
+        });
+        match command {
+            Some(command) => self.update(Message::AssignCommand(command)),
+            None => Task::none(),
         }
     }
 
@@ -1877,6 +2021,34 @@ mod tests {
             },
         }));
         assert_eq!(app.phase, Phase::Detect);
+    }
+
+    #[test]
+    fn keyboard_shortcuts_change_chapters_and_dismiss() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (mut app, _) = App::at(directory.path().to_path_buf());
+        assert_eq!(app.page, Page::Remote);
+        let _ = app.update(Message::Shortcut(
+            Key::Character("3".into()),
+            Modifiers::CTRL,
+        ));
+        assert_eq!(app.page, Page::KeyMap);
+        let _ = app.update(Message::Shortcut(
+            Key::Named(Named::PageDown),
+            Modifiers::CTRL,
+        ));
+        assert_eq!(app.page, Page::Activities);
+        let _ = app.update(Message::Shortcut(
+            Key::Named(Named::PageUp),
+            Modifiers::CTRL,
+        ));
+        assert_eq!(app.page, Page::KeyMap);
+        app.error = Some("connection lost".into());
+        let _ = app.update(Message::Shortcut(
+            Key::Named(Named::Escape),
+            Modifiers::NONE,
+        ));
+        assert!(app.error.is_none());
     }
 
     #[test]
