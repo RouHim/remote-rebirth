@@ -1452,11 +1452,18 @@ fn remote_diagram(app: &App) -> Element<'_, Message> {
         for (offset, binding) in chunk.iter().enumerate() {
             let index = chunk_index * KEY_COLUMNS + offset + 1;
             let is_selected = selected == Some(binding.name);
-            let inherited = routed_target(&app.model, binding.name, &device_name);
+            let inherited = routed_target(&app.model, binding.name, &device_name).is_some();
             let empty = app
                 .selected_device()
                 .map(|device| !device.keys.contains_key(binding.name))
                 .unwrap_or(true);
+            let label_color = if is_selected {
+                t::CREAM
+            } else if inherited {
+                t::COBALT
+            } else {
+                t::INK
+            };
             let content = row![
                 text(format!("{index:02}"))
                     .font(t::mono(Weight::Normal))
@@ -1465,7 +1472,7 @@ fn remote_diagram(app: &App) -> Element<'_, Message> {
                 text(key_short(binding.name))
                     .font(t::sans(Weight::Medium))
                     .size(7.2)
-                    .color(if is_selected { t::CREAM } else { t::INK }),
+                    .color(label_color),
             ]
             .spacing(4)
             .align_y(Alignment::Center);
@@ -1473,8 +1480,8 @@ fn remote_diagram(app: &App) -> Element<'_, Message> {
                 .width(Fill)
                 .height(Length::Fixed(20.0))
                 .padding([0, 4])
-                .style(t::key(is_selected, inherited.is_some(), empty));
-            if !app.busy && inherited.is_none() {
+                .style(t::key(is_selected, inherited, empty));
+            if !app.busy && !inherited {
                 key = key.on_press(Message::SelectKey(binding.name.into()));
             }
             cells.push(key.into());
@@ -2100,6 +2107,11 @@ fn library_page(app: &App) -> Element<'_, Message> {
         None => iced::widget::Space::new().height(0).into(),
     };
     let total_commands: usize = app.library.iter().map(|device| device.commands.len()).sum();
+    let library_status: Element<'_, Message> = if app.library_status.is_empty() {
+        iced::widget::Space::new().height(0).into()
+    } else {
+        note(&app.library_status)
+    };
     let source = section(
         "Source",
         Some("LOCAL FOLDER"),
@@ -2117,7 +2129,7 @@ fn library_page(app: &App) -> Element<'_, Message> {
             ]
             .spacing(6)
             .align_y(Alignment::Center),
-            note(&app.library_status),
+            library_status,
             note(format!(
                 "{} devices · {} commands indexed",
                 app.library.len(),
@@ -2283,7 +2295,9 @@ fn library_detail(app: &App) -> Element<'_, Message> {
     if target.is_none() {
         content = content.push(note("Choose a device on My Devices first."));
     }
-    content = content.push(note(&app.library_status));
+    if !app.library_status.is_empty() {
+        content = content.push(note(&app.library_status));
+    }
     if let Some(error) = &app.library_error {
         content = content.push(
             text(error.to_string())

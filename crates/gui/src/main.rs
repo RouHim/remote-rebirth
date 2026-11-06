@@ -199,6 +199,8 @@ struct GuiState {
     reboot: bool,
     #[serde(default)]
     advanced: bool,
+    #[serde(default)]
+    library_dir: Option<String>,
 }
 
 fn default_page() -> u8 {
@@ -217,6 +219,7 @@ impl Default for GuiState {
             selected_key: None,
             reboot: true,
             advanced: false,
+            library_dir: None,
         }
     }
 }
@@ -326,12 +329,16 @@ impl App {
             }
         };
         let backups = list_backups(&backups_dir);
-        let library_dir = data_dir.join("ir-library");
+        let library_dir = gui_state
+            .library_dir
+            .as_deref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| data_dir.join("ir-library"));
         let library = scan_library(&library_dir).unwrap_or_default();
         let library_status = if library.is_empty() {
             "No local IR Library yet. Choose a folder and Scan.".to_string()
         } else {
-            format!("{} devices indexed.", library.len())
+            String::new()
         };
         let library_selected = (!library.is_empty()).then_some(0);
         let selected_device = gui_state
@@ -1039,7 +1046,7 @@ impl App {
                         self.library_status = if devices.is_empty() {
                             "No .ir files with named commands found.".to_string()
                         } else {
-                            format!("{} devices indexed.", devices.len())
+                            "Scan complete.".to_string()
                         };
                         self.library_selected = (!devices.is_empty()).then_some(0);
                         self.library = devices;
@@ -1568,6 +1575,7 @@ impl App {
             selected_key: self.selected_key.clone(),
             reboot: self.reboot,
             advanced: self.advanced,
+            library_dir: Some(self.library_dir.clone()),
         };
         if let Ok(bytes) = serde_json::to_vec_pretty(&state) {
             let _ = std::fs::write(&self.gui_path, bytes);
