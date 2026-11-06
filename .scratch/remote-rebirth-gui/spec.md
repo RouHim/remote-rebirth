@@ -143,11 +143,14 @@ The GUI is a direct-form editor with no setup wizard. It runs on Linux x86_64 an
 
 ### Visual and interaction design
 
-- One modern calm light theme: neutral surfaces, one blue accent, mono for scan codes, digests, paths and counts, schematic vector remote diagram.
-- One radius scale and one spacing scale; every interactive widget styles hover, pressed, disabled and focus states.
-- Fixed chrome outside scroll regions; minimum window size tested without clipping.
+- Owner's-manual world: uncoated paper (#F6F0E3), a cloth-bound cover rail (#8C3F25), one oxide spot (#B34824), and grass (#5B7153) for confirmed state. Serif section headings, sans work text, mono only for codes, counts and file paths. No cards: pages, hairline rules and marginal notes.
+- Signature: the Harmony 300 is drawn once as a numbered key diagram; its callouts match the numbered work table. The Remote page carries a stepped fore-edge phase rail (Detect, Edit, Prepare, Commit, Read-Back).
+- Flat paper depth: one 1px rule weight, a 2px sheet edge, a single ambient sheet shadow, and an 18px radius only on the schematic remote body. Controls are square, flat and stateful.
+- Fixed header, sheet footer and machine status bar; only the page body scrolls. The sheet footer carries the section page number and save state.
+- The configured Model opens on Buttons; a Model without Devices opens on Remote so Detect and Backup come first. No wizard.
+- Bundled OFL faces: Public Sans (work text), Source Serif 4 SemiBold (headings), Spline Sans Mono (codes and counts). No system display face.
 - English-only v1; user strings isolated for later translation.
-- Keyboard reachability for every action; no colour-only state.
+- Keyboard reachability for every action, visible focus, no colour-only state, and AA text contrast against paper and cloth.
 
 ### Delivery slice
 
@@ -197,7 +200,7 @@ The first delivery slice is implemented:
 - Model schema v2 with optional volume/channel Routing; v1 Models remain readable.
 - Compose filters unreferenced Commands and records only composed Commands in the resolved sidecar.
 - Typed `gui_api` operations with progress events; cooperative Cancel before Commit; Commit Cancel disabled.
-- Iced GUI with Remote, Devices, Key Map (diagram/table/palette and Routing), Activities, Favourites, Settings; Detect on open, managed Backup list, standalone Compose, Prepare/Commit Write and Restore, and a separate `gui.json` for GUI-only state.
-- Tests: 136 core tests and 5 GUI tests; `cargo clippy --workspace --all-targets` clean; headless GUI verified under `sway-headless` with `grim`; CLI hardware `backup`/`compose`/`write` Dry Run verified on the Harmony 300.
+- Iced GUI rebuilt as an owner's manual: Remote, Devices, Key Map (numbered diagram, table, command index and Routing), Activities, Favourites, Settings; Detect on open, managed Backup list with stamped validation states, standalone Compose, Prepare/Commit Write and Restore, and a separate `gui.json` for GUI-only state.
+- Tests: 136 core tests and 6 GUI tests; `cargo clippy --workspace --all-targets` clean; the redesigned GUI captured under `sway-headless` with `grim` at 1240×820 and the 1040×680 minimum in `.impeccable/review/`; CLI hardware `backup`/`compose`/`write` Dry Run verified on the Harmony 300.
 
 The next slice is the first-run pinned Flipper-IRDB downloader and browser, drag-and-drop assignment, field-level inline validation, Backup retention/filtering polish, localization, and packaging. These are specified above and are not claimed as implemented.

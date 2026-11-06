@@ -1,0 +1,424 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-06T15:20:00Z",
+  "title": "Design System: Remote Rebirth",
+  "extensions": {
+    "colorMeta": {
+      "paper": {
+        "role": "neutral",
+        "displayName": "Uncoated Paper",
+        "canonical": "#F6F0E3",
+        "tonalRamp": [
+          "#3A2D13",
+          "#745B25",
+          "#A27F34",
+          "#C6A04D",
+          "#D5B97C",
+          "#E4D2AA",
+          "#F0E6D1",
+          "#F9F5EC"
+        ]
+      },
+      "paper-bright": {
+        "role": "neutral",
+        "displayName": "Bright Paper",
+        "canonical": "#FBF7ED",
+        "tonalRamp": [
+          "#3F310E",
+          "#7D611C",
+          "#AF8827",
+          "#D4AA3F",
+          "#DFC071",
+          "#EBD6A3",
+          "#F4E9CD",
+          "#FAF6EA"
+        ]
+      },
+      "desk": {
+        "role": "neutral",
+        "displayName": "Desk Linen",
+        "canonical": "#E3D8C4",
+        "tonalRamp": [
+          "#342A19",
+          "#685431",
+          "#917645",
+          "#B39660",
+          "#C7B189",
+          "#DBCDB3",
+          "#EBE4D5",
+          "#F7F4EE"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Print Ink",
+        "canonical": "#23211C",
+        "tonalRamp": [
+          "#2A2822",
+          "#555044",
+          "#77705F",
+          "#978F7D",
+          "#B2AC9F",
+          "#CDCAC1",
+          "#E4E2DD",
+          "#F4F3F1"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Muted Ink",
+        "canonical": "#6E6455",
+        "tonalRamp": [
+          "#2B2721",
+          "#564E43",
+          "#796E5D",
+          "#998D7B",
+          "#B3AB9D",
+          "#CEC8C0",
+          "#E4E1DC",
+          "#F4F3F1"
+        ]
+      },
+      "faint": {
+        "role": "neutral",
+        "displayName": "Faint Ink",
+        "canonical": "#766B5B",
+        "tonalRamp": [
+          "#2B2721",
+          "#564E43",
+          "#796E5D",
+          "#998D7B",
+          "#B4AA9D",
+          "#CEC8C0",
+          "#E4E1DC",
+          "#F4F3F1"
+        ]
+      },
+      "rule": {
+        "role": "neutral",
+        "displayName": "Hairline Rule",
+        "canonical": "#D2C6B0",
+        "tonalRamp": [
+          "#31291C",
+          "#615338",
+          "#88744E",
+          "#AA936A",
+          "#C0AF91",
+          "#D6CBB8",
+          "#E9E3D8",
+          "#F6F3EF"
+        ]
+      },
+      "oxide": {
+        "role": "primary",
+        "displayName": "Oxide Spot",
+        "canonical": "#B34824",
+        "tonalRamp": [
+          "#401A0D",
+          "#7F331A",
+          "#B24824",
+          "#D8633C",
+          "#E28C6F",
+          "#ECB4A2",
+          "#F5D6CC",
+          "#FBEEEA"
+        ]
+      },
+      "oxide-deep": {
+        "role": "primary",
+        "displayName": "Deep Oxide",
+        "canonical": "#8E3A1F",
+        "tonalRamp": [
+          "#3F1A0E",
+          "#7E331B",
+          "#B04826",
+          "#D5633E",
+          "#E08C71",
+          "#EBB4A3",
+          "#F4D6CD",
+          "#FAEEEA"
+        ]
+      },
+      "oxide-wash": {
+        "role": "primary",
+        "displayName": "Oxide Wash",
+        "canonical": "#F0DDD2",
+        "tonalRamp": [
+          "#392113",
+          "#734226",
+          "#A15D36",
+          "#C47A4F",
+          "#D49D7D",
+          "#E3BFAB",
+          "#F0DCD1",
+          "#F9F1EC"
+        ]
+      },
+      "grass": {
+        "role": "secondary",
+        "displayName": "Grass Confirmed",
+        "canonical": "#5B7153",
+        "tonalRamp": [
+          "#242C20",
+          "#475841",
+          "#637B5B",
+          "#819C78",
+          "#A2B69B",
+          "#C3CFBE",
+          "#DEE5DC",
+          "#F1F4F0"
+        ]
+      },
+      "cobalt": {
+        "role": "secondary",
+        "displayName": "Cobalt Inherited",
+        "canonical": "#2F5A7A",
+        "tonalRamp": [
+          "#152937",
+          "#2B516E",
+          "#3C729B",
+          "#5691BE",
+          "#82AECF",
+          "#AECBE0",
+          "#D3E2EE",
+          "#EDF3F8"
+        ]
+      },
+      "cloth": {
+        "role": "neutral",
+        "displayName": "Cloth Cover",
+        "canonical": "#8C3F25",
+        "tonalRamp": [
+          "#3D1B10",
+          "#793620",
+          "#A94C2D",
+          "#CE6845",
+          "#DB8F76",
+          "#E8B7A6",
+          "#F2D8CF",
+          "#FAEFEB"
+        ]
+      },
+      "cloth-deep": {
+        "role": "neutral",
+        "displayName": "Deep Cloth",
+        "canonical": "#73301C",
+        "tonalRamp": [
+          "#3E1A0F",
+          "#7B331E",
+          "#AC482A",
+          "#D16342",
+          "#DD8C74",
+          "#E9B4A5",
+          "#F3D6CE",
+          "#FAEEEA"
+        ]
+      },
+      "cloth-text": {
+        "role": "neutral",
+        "displayName": "Cloth Text",
+        "canonical": "#EED0BC",
+        "tonalRamp": [
+          "#3D220F",
+          "#7A431F",
+          "#AB5E2B",
+          "#D07C44",
+          "#DC9E75",
+          "#E8C0A6",
+          "#F3DDCE",
+          "#FAF1EB"
+        ]
+      },
+      "cream": {
+        "role": "neutral",
+        "displayName": "Cream Ink",
+        "canonical": "#FFF7E8",
+        "tonalRamp": [
+          "#4C3200",
+          "#996400",
+          "#D68C00",
+          "#FFAD14",
+          "#FFC352",
+          "#FFD88F",
+          "#FFEAC2",
+          "#FFF6E5"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display Serif",
+        "purpose": "Page titles only; Source Serif 4 SemiBold at 31px."
+      },
+      "headline": {
+        "displayName": "Section Serif",
+        "purpose": "Section headings and the command index; 18px."
+      },
+      "title": {
+        "displayName": "Work Title",
+        "purpose": "Button labels, fields, device names; Public Sans 11.5px semibold."
+      },
+      "body": {
+        "displayName": "Work Text",
+        "purpose": "Instructions and explanations; Public Sans 11.5px."
+      },
+      "label": {
+        "displayName": "Mono Margin",
+        "purpose": "Counts, codes, paths, callouts, page numbers; Spline Sans Mono 8.5px."
+      }
+    },
+    "shadows": [
+      {
+        "name": "sheet-ambient",
+        "value": "0 10px 28px rgba(38,31,22,0.18)",
+        "purpose": "Lifts the one paper sheet off the desk; no control casts a shadow."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "default",
+        "value": "1240×820px"
+      },
+      {
+        "name": "minimum",
+        "value": "1040×680px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The explicit update or add action; oxide fill, square, cream label.",
+      "html": "<button class=\"ds-btn-primary\">Review update</button>",
+      "css": ".ds-btn-primary{background:#B34824;color:#FFF7E8;border:1px solid #B34824;border-radius:0;padding:6px 12px;font-family:'Public Sans',system-ui,sans-serif;font-size:11.5px;font-weight:600;line-height:1.3;cursor:pointer;transition:background .12s,border-color .12s}.ds-btn-primary:hover{background:#8E3A1F;border-color:#8E3A1F}.ds-btn-primary:active{background:#8E3A1F}.ds-btn-primary:focus-visible{outline:2px solid #8E3A1F;outline-offset:2px}.ds-btn-primary:disabled{background:#E7DCC8;border-color:#D2C6B0;color:#766B5B;cursor:default}"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "A square paper button with an ink label; used for backup, review, and add without taking the spot.",
+      "html": "<button class=\"ds-btn-secondary\">Back up now</button>",
+      "css": ".ds-btn-secondary{background:transparent;color:#23211C;border:1px solid #D2C6B0;border-radius:0;padding:6px 10px;font-family:'Public Sans',system-ui,sans-serif;font-size:10.5px;font-weight:500;line-height:1.3;cursor:pointer;transition:background .12s,border-color .12s}.ds-btn-secondary:hover{background:#EFE6D4;border-color:#766B5B}.ds-btn-secondary:active{background:#E7DCC8;border-color:#23211C}.ds-btn-secondary:focus-visible{outline:2px solid #B34824;outline-offset:2px}"
+    },
+    {
+      "name": "Ghost Action",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "A borderless row action such as Clear or Use for restore.",
+      "html": "<button class=\"ds-btn-ghost\">Clear</button>",
+      "css": ".ds-btn-ghost{background:transparent;color:#23211C;border:0;border-radius:0;padding:4px 6px;font-family:'Public Sans',system-ui,sans-serif;font-size:10px;font-weight:500;line-height:1.3;cursor:pointer}.ds-btn-ghost:hover{background:#EFE6D4}.ds-btn-ghost:focus-visible{outline:2px solid #B34824;outline-offset:2px}.ds-btn-ghost:disabled{color:#766B5B;cursor:default}"
+    },
+    {
+      "name": "Active Navigation Item",
+      "kind": "nav",
+      "refersTo": "nav-item-active",
+      "description": "The current manual chapter on the cloth rail; dark cloth fill, semibold cream label, no side stripe.",
+      "html": "<div class=\"ds-nav\"><a class=\"ds-nav-item ds-nav-item-active\"><span>Buttons</span><span class=\"ds-nav-count\">26</span></a></div>",
+      "css": ".ds-nav{width:216px;background:#8C3F25;padding:14px;font-family:'Public Sans',system-ui,sans-serif}.ds-nav-item{display:flex;align-items:center;justify-content:space-between;padding:7px;color:#FFF7E8;font-size:12.5px;text-decoration:none}.ds-nav-item-active{background:#73301C;font-weight:600}.ds-nav-count{font-family:'Spline Sans Mono',ui-monospace,monospace;font-size:8px;color:#FFF7E8}"
+    },
+    {
+      "name": "Active Device Tab",
+      "kind": "chip",
+      "refersTo": "tab-active",
+      "description": "One of the four device tabs; the active tab is paper inside an ink border.",
+      "html": "<div class=\"ds-tabs\"><button class=\"ds-tab\">1 Living Room TV <small>9 keys</small></button><button class=\"ds-tab ds-tab-active\">2 Cable Box <small>10 keys</small></button></div>",
+      "css": ".ds-tabs{display:flex;gap:0;border-bottom:1px solid #23211C}.ds-tab{background:transparent;color:#6E6455;border:1px solid #D2C6B0;border-radius:0;padding:6px 10px;height:32px;font-family:'Public Sans',system-ui,sans-serif;font-size:10.5px;font-weight:600;text-align:left}.ds-tab small{display:block;font-family:'Spline Sans Mono',ui-monospace,monospace;font-size:7.5px;font-weight:400;color:#6E6455}.ds-tab-active{background:#F6F0E3;border-color:#23211C;color:#23211C}"
+    },
+    {
+      "name": "Device Bay",
+      "kind": "card",
+      "refersTo": "device-bay",
+      "description": "One of the four Device Key slots; the active bay is oxide-washed with oxide labels.",
+      "html": "<button class=\"ds-bay ds-bay-active\"><span class=\"ds-bay-index\">DEVICE 1</span><b>Living Room TV</b><span class=\"ds-bay-count\">10 commands</span></button>",
+      "css": ".ds-bay{display:flex;flex-direction:column;gap:3px;background:#FBF7ED;border:1px solid #D2C6B0;border-radius:0;padding:8px 9px;text-align:left;font-family:'Public Sans',system-ui,sans-serif}.ds-bay b{font-family:'Source Serif 4',Georgia,serif;font-size:14px;font-weight:600;color:#23211C}.ds-bay-index,.ds-bay-count{font-family:'Spline Sans Mono',ui-monospace,monospace;font-size:7.5px;color:#6E6455}.ds-bay-active{background:#F0DDD2;border-color:#B34824}.ds-bay-active .ds-bay-index,.ds-bay-active .ds-bay-count{color:#8E3A1F}"
+    },
+    {
+      "name": "Numbered Key",
+      "kind": "custom",
+      "refersTo": "key",
+      "description": "A key in the schematic remote; the callout number matches the table row.",
+      "html": "<button class=\"ds-key\"><span class=\"ds-key-no\">02</span><span class=\"ds-key-label\">VOL+</span></button>",
+      "css": ".ds-key{display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:4px;width:88px;height:20px;background:#FBF7ED;border:1px solid #23211C;border-radius:0;padding:0 4px;font-family:'Public Sans',system-ui,sans-serif}.ds-key-no{font-family:'Spline Sans Mono',ui-monospace,monospace;font-size:6.5px;line-height:1;color:#B34824}.ds-key-label{font-size:7.2px;font-weight:500;line-height:1.1;color:#23211C}"
+    },
+    {
+      "name": "Paper Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "A square text field on bright paper; focus switches the hairline to oxide.",
+      "html": "<input class=\"ds-input\" value=\"Living Room TV\" aria-label=\"Device name\">",
+      "css": ".ds-input{background:#FBF7ED;color:#23211C;border:1px solid #D2C6B0;border-radius:0;padding:6px;font-family:'Public Sans',system-ui,sans-serif;font-size:11px;line-height:1.3}.ds-input::placeholder{color:#766B5B}.ds-input:hover{border-color:#766B5B}.ds-input:focus{outline:none;border-color:#B34824}"
+    },
+    {
+      "name": "Validation Stamp",
+      "kind": "chip",
+      "refersTo": "stamp",
+      "description": "A square outline stamp; the word carries the state and the colour only reinforces it.",
+      "html": "<span class=\"ds-stamp ds-stamp-verified\">Verified</span> <span class=\"ds-stamp ds-stamp-invalid\">Invalid</span>",
+      "css": ".ds-stamp{display:inline-block;border:1px solid;border-radius:0;padding:2px 5px;font-family:'Spline Sans Mono',ui-monospace,monospace;font-size:7.5px;font-weight:500;line-height:1.2;letter-spacing:.04em;text-transform:uppercase}.ds-stamp-verified{color:#5B7153;border-color:#5B7153}.ds-stamp-invalid{color:#8E3A1F;border-color:#8E3A1F}"
+    },
+    {
+      "name": "Phase Rail Cell",
+      "kind": "custom",
+      "refersTo": "phase-rail",
+      "description": "A stepped fore-edge chapter; the active cell is oxide-washed and carries a filled dot.",
+      "html": "<div class=\"ds-phase\"><span class=\"ds-phase-no\">02</span><span class=\"ds-phase-name\">BACKUP</span><span class=\"ds-phase-dot ds-phase-dot-on\"></span></div>",
+      "css": ".ds-phase{display:flex;flex-direction:column;justify-content:space-between;width:74px;height:110px;padding:8px 7px;border:1px solid #B34824;background:#F0DDD2;font-family:'Spline Sans Mono',ui-monospace,monospace}.ds-phase-no{font-size:8px;color:#8E3A1F}.ds-phase-name{font-size:8px;font-weight:500;color:#23211C}.ds-phase-dot{width:7px;height:7px;border-radius:50%;border:1px solid #D2C6B0}.ds-phase-dot-on{background:#B34824;border-color:#B34824}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Open Owner's Manual",
+    "overview": "The GUI is a printed owner's manual that happens to be interactive. A cloth-bound rail holds the chapters; a single uncoated sheet carries the work; every page is set as a spread with a fixed header, a page number, and hairline rules instead of floating cards. The remote itself is explained once, as a numbered line drawing, and that drawing is the spine of the key editor. The system is calm because the task is cautious: the owner is about to erase and rewrite a device they depend on. Paper, ink, and one oxide spot carry the action; grass confirms, cobalt marks inheritance, and oxide-deep carries failure. Technical values appear only as mono marginalia, never as the page's voice.",
+    "keyCharacteristics": [
+      "Paper-and-cloth surfaces with a single ambient sheet shadow.",
+      "One oxide action spot; success and inheritance are separate, labelled states.",
+      "Numbered callouts tie the remote drawing to the work table.",
+      "Serif headings, sans work text, mono codes.",
+      "Flat, square controls; one 18px radius only on the schematic remote body."
+    ],
+    "rules": [
+      {
+        "name": "The One Spot Rule",
+        "body": "Oxide appears only on something the owner can act on or has selected. It never decorates a neutral surface, and it never carries a state that words can carry alone.",
+        "section": "colors"
+      },
+      {
+        "name": "The Paper Ground Rule",
+        "body": "Cards are not containers here. A region is paper, a rule, or a marginal note; nothing floats on a second white surface.",
+        "section": "colors"
+      },
+      {
+        "name": "The Callout Rule",
+        "body": "Every key in the drawing carries a two-digit mono number in oxide; the same number opens the matching table row. The drawing and the table are one document, not two views.",
+        "section": "typography"
+      },
+      {
+        "name": "The Mono Margin Rule",
+        "body": "Mono is for values, never for prose. If a sentence moves into mono, it is a code, a path, a count, or a callout.",
+        "section": "typography"
+      },
+      {
+        "name": "The One Sheet Rule",
+        "body": "Only the sheet may cast a shadow. A shadow on a control means the surface has stopped being paper.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do keep the sheet as the only shadowed surface and use 1px rules for structure.",
+      "Do pair every state colour with its word: Verified, Invalid, Assigned, Inherited, Empty.",
+      "Do keep the callout number on every key and the matching number in the table.",
+      "Do use the serif for page and section headings and Public Sans for work text.",
+      "Do use mono only for codes, paths, counts, and callouts.",
+      "Do keep the configured Model opening on Buttons and the empty Model on Remote."
+    ],
+    "donts": [
+      "Don't put controls on cards or add a second white surface.",
+      "Don't add a coloured side stripe to a nav item, row, or callout.",
+      "Don't use gradient text, glass, glyph icons, or emoji as iconography.",
+      "Don't use blue as the action colour; oxide is the one spot.",
+      "Don't round primary actions into pills; only the remote body is 18px.",
+      "Don't ask the owner to type a command name where a pick list can offer the device's own commands."
+    ]
+  }
+}
