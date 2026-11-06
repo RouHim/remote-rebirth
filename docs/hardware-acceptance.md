@@ -10,31 +10,32 @@ Remote before treating the write path as proven.
 - udev rule installed from `contrib/99-remote-rebirth.rules`, or the CLI run with sufficient USB
   permissions.
 - A bench IR receiver for the key-send checks.
-- A known-good Backup made before any committed Write.
+- A known-good Backup made before any committed Write, outside `/tmp`; `/tmp` is cleared and is not a
+  recovery point.
 
 ## Read-only checks
 
 - [x] `remote-rebirth detect --json` reports `supported: true`, `model: "Harmony 300"`,
       `architecture: 16`, the expected `skin` (78 or 79), firmware version, and GUID.
-- [x] `remote-rebirth backup --out /tmp/h300-backup.bin` writes the Container and sidecar.
+- [x] `remote-rebirth backup --out $HOME/h300-backups/h300-backup.bin` writes the Container and sidecar.
 - [x] The sidecar `validation` is `ok`; `size` and `sha256` match the file.
-- [x] `remote-rebirth inspect --file /tmp/h300-backup.bin --json` parses without error and lists the
+- [x] `remote-rebirth inspect --file $HOME/h300-backups/h300-backup.bin --json` parses without error and lists the
       Container metadata, Devices, key maps, Watch TV Activity, Favourites, and IR Records.
 
 ## Compose checks
 
 - [ ] A model with four Devices, explicit Device Keys, a Watch TV Activity, and the profile's full
       Favourite capacity composes without error.
-- [ ] `remote-rebirth inspect --file <composed.bin> --json` shows the declared Devices, keys,
+- [x] `remote-rebirth inspect --file <composed.bin> --json` shows the declared Devices, keys,
       Activity, Favourites, and IR Records.
-- [x] `remote-rebirth write --container <composed.bin> --backup /tmp/h300-backup.bin` (Dry Run)
+- [x] `remote-rebirth write --container <composed.bin> --backup $HOME/h300-backups/h300-backup.bin` (Dry Run)
       succeeds without erasing the Remote.
 - [ ] A model with duplicate Device Keys, an unsupported protocol, or too many Favourites is rejected
       before any write.
 
 ## Committed Write
 
-- [x] `remote-rebirth write --container <composed.bin> --backup /tmp/h300-backup.bin --commit`
+- [x] `remote-rebirth write --container <composed.bin> --backup $HOME/h300-backups/h300-backup.bin --commit`
       completes; the Read-Back equals the written Container.
 - [x] The Remote reboots (unless `--no-reboot`) and remains operational.
 - [ ] Each Device Key selects its declared Device.
@@ -44,7 +45,7 @@ Remote before treating the write path as proven.
 
 ## Restore
 
-- [x] `remote-rebirth restore --backup /tmp/h300-backup.bin --commit` completes; the Read-Back equals
+- [x] `remote-rebirth restore --backup $HOME/h300-backups/h300-backup.bin --commit` completes; the Read-Back equals
       the Backup byte for byte.
 - [x] The Remote remains operational after the restore.
 
@@ -75,6 +76,9 @@ firmware 1.4.0, hardware 0.0. The original Configuration was 24725 bytes, SHA-25
 - `inspect`: passed, parsed 15 slots, 1 Device, 0 Favourites.
 - `compose`: passed, 803 bytes, 1 Device, SHA-256
   `1dc12d045d05534444f0c9e4c4962b1f67f76d0300c7b98784a8c37819f81a72`.
+- A four-Device, four-Favourite model composed to 1893 bytes, SHA-256
+  `87ec5f371ac59c53975bf5cff7bc02cc338f9bca829419fbb5048d58301c8d15`; `inspect` showed the four
+  Device Keys and four Favourites, and the `write` Dry Run passed (1 chunk, 31 data packets).
 - `write` Dry Run: passed, 803 bytes, 1 chunk, 13 data packets.
 - Committed `write`: first attempt failed at the chunk acknowledgement because the expected byte was
   read at offset 0 instead of offset 2; the open had erased the Configuration. `restore` of the
@@ -87,5 +91,9 @@ firmware 1.4.0, hardware 0.0. The original Configuration was 24725 bytes, SHA-25
   device ... no longer connected", and the same command passed after four seconds.
 
 Not covered by this run: a physical IR bench (the verification model used synthetic Pronto pulses), a
-four-Device/full-Favourite compose, and the refusal cases that need induced protocol faults. The write,
-chunked-write, Read-Back, reboot, and Restore paths were exercised on hardware.
+four-Device/full-Favourite committed Write, and the refusal cases that need induced protocol faults.
+The write, chunked-write, Read-Back, reboot, and Restore paths were exercised on hardware.
+
+The original Configuration is preserved outside `/tmp` at
+`/home/rouven/h300-backups/2026-11-05-original.bin` with its sidecar; its SHA-256 is the original
+`d1b78d77dacf1e1c2dac124bb3b4a755d5a6d76bcc9b772e169fc73d9cbfa279`.
