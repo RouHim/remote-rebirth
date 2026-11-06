@@ -41,7 +41,7 @@ mod write;
 
 #[cfg(test)]
 mod architecture_tests;
-#[cfg(test)]
+#[cfg(all(test, feature = "cli"))]
 mod compose_tests;
 #[cfg(test)]
 mod empty_tests;

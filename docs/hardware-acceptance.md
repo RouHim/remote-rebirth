@@ -64,18 +64,24 @@ Remote before treating the write path as proven.
 
 Run `target/release/remote-rebirth-gui` on the machine with the Remote attached.
 
+- [ ] Enable Settings → Show technical details before running the checks that name Skin, digests, or
+      packet counts; those details are hidden without it. The firmware version is shown on the
+      Remote page either way; only the footer's Skin and firmware line is gated.
 - [ ] The footer reports `Harmony 300`, Skin 79, firmware 1.4.0 after Detect.
-- [ ] Backup now writes a managed Backup and its sidecar under the app data directory.
+- [ ] Save backup writes a managed Backup and its sidecar under the app data directory.
 - [ ] Adding a Device with a local Pronto/LIRC/Flipper Command validates the Model.
 - [ ] Selecting a Key in the diagram and assigning a Command updates both the diagram and the table.
-- [ ] Setting Volume controls to the TV and Channel controls to the cable Device composes a
-      Container whose non-target Key Maps contain the routed scans.
-- [ ] Prepare Write captures a fresh Backup, composes, Dry Runs, and shows bytes, chunks, data
+- [ ] Setting Volume buttons to the TV and Channel buttons to the cable Device in the Volume and
+      channel buttons card composes a Container whose non-target Key Maps contain the routed scans.
+- [ ] Review update captures a fresh Backup, composes, Dry Runs, and shows bytes, chunks, data
       packets and the Backup digest.
-- [ ] Commit Write completes, the Read-Back equals the Container, and the Remote reboots.
-- [ ] Prepare Restore and Commit Restore return the Remote to a verified Backup byte for byte.
+- [ ] Update remote completes, the Read-Back equals the Container, and the Remote reboots.
+- [ ] Review restore and Restore remote return the Remote to a verified Backup byte for byte.
 
-The bench receiver checks in the committed Write section are also the routing acceptance gate.
+The bench receiver checks in the committed Write section are also the routing acceptance gate: with
+Volume buttons set to the TV and Channel buttons set to the cable Device, the non-TV Devices'
+volume keys send the TV's codes, the non-cable Devices' channel keys send the cable Device's codes,
+and the TV and cable Device still send their own codes for those keys.
 
 ## Record
 

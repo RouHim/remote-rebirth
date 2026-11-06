@@ -48,7 +48,7 @@ The GUI is a direct-form editor with no setup wizard. It runs on Linux x86_64 an
 18. As an owner, I want keyboard-only assignment to match mouse assignment, so that the editor is accessible.
 19. As an owner, I want occupied Device Keys disabled, so that two Devices cannot share one slot.
 20. As an owner, I want inline errors for missing Commands, unknown keys and routing conflicts, so that Compose is never a wall of schema errors.
-21. As an owner, I want “Volume controls: TV” and “Channel controls: Cable/Sat” settings, so that those keys work regardless of the selected Device.
+21. As an owner, I want “Volume buttons: TV” and “Channel buttons: Cable/Sat” settings, so that those keys work regardless of the selected Device.
 22. As an owner, I want the target Device's own Key Map bindings to define the routed commands, so that I edit the command once and every Device inherits it.
 23. As an owner, I want routed keys shown as inherited on non-target Devices, so that I do not accidentally create a conflicting binding.
 24. As an owner, I want a missing target binding to name the Device and key, so that I know what to fix.
@@ -75,7 +75,7 @@ The GUI is a direct-form editor with no setup wizard. It runs on Linux x86_64 an
 
 - Convert the repository to a Cargo workspace:
   - `remote-rebirth-core`: typed operations, Model validation, codecs, transport traits, progress events, no stdout/stderr, no network client.
-  - `remote-rebirth-cli`: the existing `remote-rebirth` binary; clap, tracing subscriber, JSON rendering, exit codes.
+  - `remote-rebirth-cli`: the existing `remote-rebirth` binary; a thin adapter that initialises the tracing subscriber, builds the runtime and calls `run`. The clap definitions, JSON rendering and exit-code mapping live in the core behind its default `cli` feature.
   - `remote-rebirth-gui`: Iced application, IR Library downloader/indexer, GUI project state.
 - The binary name `remote-rebirth` and its documented contract stay unchanged. The GUI binary is `remote-rebirth-gui` for the MVP.
 - Core operations return typed reports and accept a progress sink. The GUI runs them on a worker thread and receives events through an Iced subscription. Cancellation is checked between steps and is disabled after reset/open.
@@ -198,6 +198,6 @@ The first delivery slice is implemented:
 - Compose filters unreferenced Commands and records only composed Commands in the resolved sidecar.
 - Typed `gui_api` operations with progress events; cooperative Cancel before Commit; Commit Cancel disabled.
 - Iced GUI with Remote, Devices, Key Map (diagram/table/palette and Routing), Activities, Favourites, Settings; Detect on open, managed Backup list, standalone Compose, Prepare/Commit Write and Restore, and a separate `gui.json` for GUI-only state.
-- Tests: 136 core tests and 4 GUI tests; `cargo clippy --workspace --all-targets` clean; headless GUI verified under `sway-headless` with `grim`; CLI hardware `backup`/`compose`/`write` Dry Run verified on the Harmony 300.
+- Tests: 136 core tests and 5 GUI tests; `cargo clippy --workspace --all-targets` clean; headless GUI verified under `sway-headless` with `grim`; CLI hardware `backup`/`compose`/`write` Dry Run verified on the Harmony 300.
 
 The next slice is the first-run pinned Flipper-IRDB downloader and browser, drag-and-drop assignment, field-level inline validation, Backup retention/filtering polish, localization, and packaging. These are specified above and are not claimed as implemented.

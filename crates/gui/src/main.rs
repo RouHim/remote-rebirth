@@ -226,6 +226,7 @@ struct App {
     selected_device: usize,
     selected_key: Option<String>,
     command_filter: String,
+    device_name_draft: Option<(usize, String)>,
     new_device_name: String,
     new_device_key: u8,
     new_command: CommandForm,
@@ -285,7 +286,27 @@ impl App {
             }
             Err(error) => {
                 if model_path.exists() {
-                    load_error = Some(format!("{} cannot be read: {error}", model_path.display()));
+                    // The blank Model has no Devices, so the Detect started by `new` adopts the
+                    // connected skin and persists, which would rename a fresh file over this one.
+                    // Keep the unreadable file under a clear suffix before that can happen.
+                    let stamp = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map(|duration| duration.as_nanos())
+                        .unwrap_or_default();
+                    let preserved =
+                        model_path.with_file_name(format!("model.json.unreadable-{stamp}"));
+                    load_error = Some(match std::fs::rename(&model_path, &preserved) {
+                        Ok(()) => format!(
+                            "{} cannot be read: {error}. The file was kept as {}.",
+                            model_path.display(),
+                            preserved.display()
+                        ),
+                        Err(rename_error) => format!(
+                            "{} cannot be read: {error}, and it could not be moved aside: \
+                             {rename_error}. Repair or remove it before saving.",
+                            model_path.display()
+                        ),
+                    });
                 }
                 gui_api::blank_model(79)
             }
@@ -321,6 +342,7 @@ impl App {
                 selected_device,
                 selected_key,
                 command_filter: String::new(),
+                device_name_draft: None,
                 new_device_name: String::new(),
                 new_device_key: 1,
                 new_command: CommandForm::default(),
@@ -585,6 +607,7 @@ impl App {
                     self.selected_device = index;
                     self.selected_key = None;
                     self.activity_device = self.model.devices[index].name.clone();
+                    self.sync_device_name_draft();
                     self.save_gui_state();
                 }
                 Task::none()
@@ -598,6 +621,7 @@ impl App {
                 {
                     self.selected_device = index;
                     self.selected_key = None;
+                    self.sync_device_name_draft();
                 }
                 Task::none()
             }
@@ -614,8 +638,25 @@ impl App {
                 Task::none()
             }
             Message::DeviceName(index, name) => {
+                if self.model.devices.get(index).is_none() {
+                    return Task::none();
+                }
+                self.device_name_draft = Some((index, name.clone()));
+                let duplicate = self
+                    .model
+                    .devices
+                    .iter()
+                    .enumerate()
+                    .any(|(other, device)| other != index && device.name == name);
+                if duplicate {
+                    self.error = Some(format!("Device '{name}' already exists."));
+                    return Task::none();
+                }
                 if let Some(device) = self.model.devices.get_mut(index) {
                     let old = device.name.clone();
+                    if old == name {
+                        return Task::none();
+                    }
                     device.name = name.clone();
                     for step in &mut self.model.activity.steps {
                         if step.device == old {
@@ -633,8 +674,11 @@ impl App {
                             routing.channel = Some(name.clone());
                         }
                     }
+                    if self.activity_device == old {
+                        self.activity_device = name.clone();
+                    }
+                    self.persist();
                 }
-                self.persist();
                 Task::none()
             }
             Message::DeviceKey(index, key) => {
@@ -669,10 +713,41 @@ impl App {
                             .map(|device| device.name.clone())
                             .unwrap_or_default();
                     }
+                    if let Some(routing) = &mut self.model.routing {
+                        if routing.volume.as_deref() == Some(removed.name.as_str()) {
+                            routing.volume = None;
+                        }
+                        if routing.channel.as_deref() == Some(removed.name.as_str()) {
+                            routing.channel = None;
+                        }
+                    }
+                    if let Some(routing) = &self.model.routing
+                        && routing.volume.is_none()
+                        && routing.channel.is_none()
+                    {
+                        self.model.routing = None;
+                    }
+                    if !self
+                        .model
+                        .devices
+                        .iter()
+                        .any(|device| device.name == self.activity_device)
+                    {
+                        self.activity_device = self
+                            .model
+                            .devices
+                            .first()
+                            .map(|device| device.name.clone())
+                            .unwrap_or_default();
+                    }
+                    if index < self.selected_device {
+                        self.selected_device -= 1;
+                    }
                     self.selected_device = self
                         .selected_device
                         .min(self.model.devices.len().saturating_sub(1));
                     self.selected_key = None;
+                    self.sync_device_name_draft();
                     self.persist();
                 }
                 Task::none()
@@ -840,15 +915,14 @@ impl App {
                 Task::none()
             }
             Message::AddStep => {
-                let device = if self.activity_device.is_empty() {
-                    self.model
-                        .devices
-                        .first()
-                        .map(|device| device.name.clone())
-                        .unwrap_or_default()
-                } else {
-                    self.activity_device.clone()
-                };
+                let device = self
+                    .model
+                    .devices
+                    .iter()
+                    .find(|device| device.name == self.activity_device)
+                    .or_else(|| self.model.devices.first())
+                    .map(|device| device.name.clone())
+                    .unwrap_or_default();
                 if !device.is_empty() {
                     self.model.activity.steps.push(ActivityStep {
                         device,
@@ -876,13 +950,21 @@ impl App {
                 Task::none()
             }
             Message::AddFavourite => {
-                let key = self.model.favourites.len() as u8 + 1;
                 let capacity = profile::skin_profile(&profile::HARMONY_300, self.model.skin)
                     .map(|skin| skin.favourite_capacity)
                     .unwrap_or(0);
-                if usize::from(key) <= capacity && !self.new_favourite_channel.trim().is_empty() {
+                let key = (1..=capacity).find(|key| {
+                    !self
+                        .model
+                        .favourites
+                        .iter()
+                        .any(|favourite| usize::from(favourite.key) == *key)
+                });
+                if self.new_favourite_channel.trim().is_empty() {
+                    self.error = Some("Enter a channel number.".into());
+                } else if let Some(key) = key {
                     self.model.favourites.push(Favourite {
-                        key,
+                        key: key as u8,
                         channel: self.new_favourite_channel.trim().to_string(),
                     });
                     self.new_favourite_channel.clear();
@@ -913,12 +995,20 @@ impl App {
                 Task::none()
             }
             Message::RestorePath(path) => {
+                if self.restore_path != path && self.prepared_kind == Some(PreparedKind::Restore) {
+                    self.prepared_kind = None;
+                    self.last_prepare = None;
+                }
                 self.restore_path = path;
                 Task::none()
             }
             Message::Save => {
                 self.persist();
-                self.status = format!("Saved {}", self.model_path.display());
+                if self.saved {
+                    self.status = format!("Saved {}", self.model_path.display());
+                } else {
+                    self.status = "The setup could not be saved.".to_string();
+                }
                 Task::none()
             }
             Message::Reload => {
@@ -926,9 +1016,16 @@ impl App {
                     self.model = model;
                     self.selected_device = 0;
                     self.selected_key = None;
+                    self.activity_device = self
+                        .model
+                        .devices
+                        .first()
+                        .map(|device| device.name.clone())
+                        .unwrap_or_default();
                     self.container_size = None;
                     self.prepared_kind = None;
                     self.last_prepare = None;
+                    self.sync_device_name_draft();
                     self.status = format!("Reloaded {}", self.model_path.display());
                 } else {
                     self.error = Some("The saved setup cannot be read.".into());
@@ -959,6 +1056,14 @@ impl App {
                             self.model = model;
                             self.selected_device = 0;
                             self.selected_key = None;
+                            self.activity_device = self
+                                .model
+                                .devices
+                                .first()
+                                .map(|device| device.name.clone())
+                                .unwrap_or_default();
+                            self.container_size = None;
+                            self.sync_device_name_draft();
                             self.persist();
                             self.status = format!("Imported {}", path.display());
                         }
@@ -969,7 +1074,14 @@ impl App {
                 Task::none()
             }
             Message::UseBackup(path) => {
-                self.restore_path = path.display().to_string();
+                let selected = path.display().to_string();
+                if self.restore_path != selected
+                    && self.prepared_kind == Some(PreparedKind::Restore)
+                {
+                    self.prepared_kind = None;
+                    self.last_prepare = None;
+                }
+                self.restore_path = selected;
                 self.page = Page::Remote;
                 Task::none()
             }
@@ -987,14 +1099,24 @@ impl App {
                     self.prepared_kind = None;
                     self.last_prepare = None;
                 }
+                if Path::new(self.restore_path.trim()) == path.as_path() {
+                    self.prepared_kind = None;
+                    self.last_prepare = None;
+                }
                 self.refresh_backups();
                 Task::none()
             }
             Message::UseDetectedSkin(skin) => {
-                self.model.skin = skin;
-                self.error = None;
-                self.persist();
-                self.status = "Setup switched to the connected remote's version.".into();
+                if profile::skin_profile(&profile::HARMONY_300, skin).is_some() {
+                    self.model.skin = skin;
+                    self.error = None;
+                    self.persist();
+                    self.status = "Setup switched to the connected remote's version.".into();
+                } else {
+                    self.error = Some(
+                        "The connected remote's version is not supported by this setup.".into(),
+                    );
+                }
                 Task::none()
             }
             Message::Reboot(reboot) => {
@@ -1036,7 +1158,9 @@ impl App {
                 self.prepared_kind = None;
                 self.last_prepare = None;
                 if self.model.devices.is_empty()
+                    && report.supported
                     && let Some(skin) = report.skin
+                    && profile::skin_profile(&profile::HARMONY_300, skin).is_some()
                 {
                     self.model.skin = skin;
                     self.persist();
@@ -1044,9 +1168,9 @@ impl App {
                 self.status = if report.supported {
                     if self.advanced {
                         format!(
-                            "{} connected — Skin {:?}, firmware {}",
+                            "{} connected — Skin {}, firmware {}",
                             report.model,
-                            report.skin,
+                            plain_number(report.skin),
                             report.firmware_version.as_deref().unwrap_or("unknown")
                         )
                     } else {
@@ -1183,12 +1307,14 @@ impl App {
 
     fn persist(&mut self) {
         self.save_gui_state();
+        // A prepared Write or Restore is only trustworthy while `model.json` matches the Model in
+        // memory, so a failed save must drop it as well as a successful one.
+        self.prepared_kind = None;
+        self.last_prepare = None;
         if let Err(error) = gui_api::save_model(&self.model_path, &self.model) {
             self.error = Some(error_text(error));
             self.saved = false;
         } else {
-            self.prepared_kind = None;
-            self.last_prepare = None;
             self.saved = true;
         }
     }
@@ -1231,6 +1357,17 @@ impl App {
 
     fn selected_device_name(&self) -> Option<String> {
         self.selected_device().map(|device| device.name.clone())
+    }
+
+    /// Keep the in-progress Device name text of the selected row in step with the Model,
+    /// so a rejected rename never leaks into another Device or a reloaded Model.
+    fn sync_device_name_draft(&mut self) {
+        let draft = self
+            .model
+            .devices
+            .get(self.selected_device)
+            .map(|device| (self.selected_device, device.name.clone()));
+        self.device_name_draft = draft;
     }
 
     fn validation(&self) -> Option<String> {
@@ -1279,6 +1416,7 @@ impl App {
         self.selected_device = self.model.devices.len() - 1;
         self.activity_device = name.clone();
         self.new_device_name.clear();
+        self.sync_device_name_draft();
         self.persist();
         self.status = format!("Added Device '{name}'.");
     }
@@ -1312,10 +1450,24 @@ impl App {
             let device_name = device.name.clone();
             for step in &mut self.model.activity.steps {
                 if step.device == device_name {
-                    if name == "power" && step.power.is_none() {
+                    if step
+                        .power
+                        .as_deref()
+                        .is_some_and(|value| value.eq_ignore_ascii_case(&name))
+                    {
                         step.power = Some(name.clone());
                     }
-                    if name == "input" && step.input.is_none() {
+                    if step
+                        .input
+                        .as_deref()
+                        .is_some_and(|value| value.eq_ignore_ascii_case(&name))
+                    {
+                        step.input = Some(name.clone());
+                    }
+                    if step.power.is_none() && name.eq_ignore_ascii_case("power") {
+                        step.power = Some(name.clone());
+                    }
+                    if step.input.is_none() && name.eq_ignore_ascii_case("input") {
                         step.input = Some(name.clone());
                     }
                 }
@@ -1377,9 +1529,9 @@ impl App {
     fn view_footer(&self) -> Element<'_, Message> {
         let identity = match &self.remote {
             Some(remote) if self.advanced => format!(
-                "{} · Skin {:?} · firmware {} · {}",
+                "{} · Skin {} · firmware {} · {}",
                 remote.model,
-                remote.skin,
+                plain_number(remote.skin),
                 remote.firmware_version.as_deref().unwrap_or("?"),
                 remote.usb.product.as_deref().unwrap_or("USB")
             ),
@@ -1476,8 +1628,8 @@ impl App {
             Some(remote) if self.advanced => Column::with_children(vec![
                 data_line("Model", &remote.model),
                 data_line("Family", remote.family.unwrap_or("unknown")),
-                data_line("Architecture", &format!("{:?}", remote.architecture)),
-                data_line("Skin", &format!("{:?}", remote.skin)),
+                data_line("Architecture", &plain_number(remote.architecture)),
+                data_line("Skin", &plain_number(remote.skin)),
                 data_line(
                     "Firmware",
                     remote.firmware_version.as_deref().unwrap_or("unknown"),
@@ -1693,6 +1845,10 @@ impl App {
         let mut devices: Vec<Element<'_, Message>> = Vec::new();
         for (index, device) in self.model.devices.iter().enumerate() {
             let selected = index == self.selected_device;
+            let name_text = match &self.device_name_draft {
+                Some((draft_index, draft)) if *draft_index == index => draft.clone(),
+                _ => device.name.clone(),
+            };
             let mut select = button(text(if selected { "Selected" } else { "Select" }).size(14))
                 .padding([8, 10]);
             if !self.busy {
@@ -1705,7 +1861,7 @@ impl App {
             }
             devices.push(
                 row![
-                    text_input("Device name", &device.name)
+                    text_input("Device name", &name_text)
                         .on_input(move |name| Message::DeviceName(index, name))
                         .width(Length::Fixed(190.0)),
                     pick_list(
@@ -2471,6 +2627,11 @@ fn short_digest(digest: &str) -> String {
     digest.chars().take(12).collect()
 }
 
+/// Renders an optional protocol number for technical details without `Some(...)`.
+fn plain_number(value: Option<u8>) -> String {
+    value.map_or_else(|| "?".into(), |value| value.to_string())
+}
+
 fn error_text(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
@@ -2523,7 +2684,7 @@ fn friendly_error(error: &str) -> String {
         "Add at least one device before checking the setup.".into()
     } else if lower.contains("does not bind key") {
         "Choose the volume or channel buttons for the target device first.".into()
-    } else if lower.contains("which routing") || lower.contains("binds key") {
+    } else if lower.contains("which routing") {
         "This button is controlled by another device. Change the volume or channel control first."
             .into()
     } else if lower.contains("backup validation") || lower.contains("unverified backup") {
@@ -2532,12 +2693,14 @@ fn friendly_error(error: &str) -> String {
         "The remote has changed since the backup. Save a new backup, then try again.".into()
     } else if lower.contains("read-back mismatch") {
         "The remote did not store the update correctly. Restore your backup.".into()
+    } else if lower.contains("container is for skin") {
+        "This setup is for a different remote version. Use the connected remote's version, then check the setup again.".into()
     } else if lower.contains("container is") || lower.contains("container checksum") {
         "The new setup is not valid. Check the devices and buttons.".into()
     } else if lower.contains("link_packet_length") {
         "This remote is not responding correctly. Reconnect it and try again.".into()
     } else {
-        "Something went wrong. Check the remote connection and try again.".into()
+        error.to_string()
     }
 }
 
@@ -2701,6 +2864,23 @@ mod tests {
         gui_api::validate_model(&app.model).expect("a valid one-Device project");
         assert!(directory.path().join("model.json").exists());
         assert!(directory.path().join("gui.json").exists());
+    }
+
+    #[test]
+    fn unreadable_model_is_kept_before_the_blank_project_can_be_saved() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let model_path = directory.path().join("model.json");
+        std::fs::write(&model_path, b"{ not a Model }").expect("write an unreadable Model");
+        let (app, _) = App::at(directory.path().to_path_buf());
+        assert!(!model_path.exists(), "the unreadable file stays untouched");
+        let kept: Vec<_> = std::fs::read_dir(directory.path())
+            .expect("read_dir")
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("model.json.unreadable-"))
+            .collect();
+        assert_eq!(kept.len(), 1, "the unreadable file was moved aside");
+        assert!(app.error.is_some(), "the loss is reported");
     }
 
     #[test]

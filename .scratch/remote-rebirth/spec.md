@@ -108,7 +108,7 @@ GUI user stories are in `.scratch/remote-rebirth-gui/spec.md`.
 
 ### Package and test seam
 
-- The CLI-only v1 was one Cargo package with a library target and a binary target. The GUI feature converts the repository to a workspace: `remote-rebirth-core` (typed operations, validation, codecs, transport traits, progress events, no stdout/stderr, no network client), `remote-rebirth-cli` (the existing `remote-rebirth` binary and adapter), and `remote-rebirth-gui` (Iced application, IR Library downloader and GUI-only project state). The flat module tree remains for the core; the CLI keeps only the adapter and CLI-facing tests. See `.scratch/remote-rebirth-gui/spec.md`.
+- The CLI-only v1 was one Cargo package with a library target and a binary target. The GUI feature converts the repository to a workspace: `remote-rebirth-core` (typed operations, validation, codecs, transport traits, progress events, no stdout/stderr of its own, no network client), `remote-rebirth-cli` (the existing `remote-rebirth` binary: a runtime builder that calls `run`), and `remote-rebirth-gui` (Iced application, IR Library downloader and GUI-only project state). The flat module tree — including the clap-based CLI adapter behind the default `cli` feature — remains in the core; the CLI package keeps only the runtime builder. See `.scratch/remote-rebirth-gui/spec.md`.
 - The binary is a thin adapter: collect arguments, build the real runtime, call `run(args, runtime)`, and exit with its code.
 - `run(args, runtime) -> Exit` is the single test seam. It owns argument parsing, command dispatch, validation, codecs, protocol sequencing, artifacts, JSON output, and exit-code mapping.
 - `Runtime` supplies:

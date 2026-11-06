@@ -18,7 +18,7 @@ The CLI is the scripting and recovery surface. The GUI is the owner-facing surfa
 The CLI-only v1 was one Cargo package. This feature converts the repository to a workspace:
 
 - `remote-rebirth-core` — typed operations, validation, codecs, transport traits, progress events, no stdout/stderr, no network client.
-- `remote-rebirth-cli` — the existing `remote-rebirth` binary: clap, tracing subscriber, JSON rendering, exit codes.
+- `remote-rebirth-cli` — the existing `remote-rebirth` binary: a thin adapter that initialises tracing on stderr, builds the real runtime, calls `run(args, runtime)` and exits with its code; the clap definitions, JSON rendering and exit-code mapping live in the core behind its default `cli` feature.
 - `remote-rebirth-gui` — the Iced application, IR Library downloader and indexer, GUI-only project state.
 
 ## User Scenarios
@@ -41,8 +41,8 @@ An owner connects the Remote and captures a recovery point before editing.
 
 **Acceptance**
 
-1. Given a connected Harmony 300, when the GUI opens or the owner presses Refresh, then the footer reports model, Skin, architecture, firmware version, GUID and serial number.
-2. Given a connected Remote and a chosen backup target, when the owner presses Backup now, then the GUI writes a Backup Container and sidecar, shows the SHA-256 and validation status, and adds it to the managed Backup list.
+1. Given a connected Harmony 300, when the GUI opens or the owner presses Find remote, then with Settings → Show technical details enabled the Remote page reports model, Skin, architecture, firmware version, GUID and serial number.
+2. Given a connected Remote, when the owner presses Save backup, then the GUI writes a Backup Container and sidecar under the app data directory, adds it to the managed Backup list with its validation status, and with Settings → Show technical details enabled also reports the SHA-256.
 3. Given no Remote, when the GUI opens, then it remains usable for offline editing and names the missing device in the Remote page.
 4. Given a recognised but unsupported model, when the GUI opens, then it reports the model and refuses Detect-dependent Write actions without opening the Remote for writing.
 
@@ -75,7 +75,7 @@ An owner wants volume to control the television and channel to control the cable
 
 **Acceptance**
 
-1. Given the Key Map page, when the owner sets “Volume controls: TV” and “Channel controls: Cable/Sat”, then the Model records `routing.volume = "TV"` and `routing.channel = "Cable/Sat"`.
+1. Given the Key Map page, when the owner sets “Volume buttons: TV” and “Channel buttons: Cable/Sat”, then the Model records `routing.volume = "TV"` and `routing.channel = "Cable/Sat"`.
 2. Given a routing target, when its own Key Map binds `volume_up`, `volume_down` and `volume_mute` (or `channel_up` and `channel_down`), then Compose copies those bindings into every other Device's Key Map.
 3. Given the target does not bind a required key, then the GUI names the missing key and the target Device and blocks Compose/Write.
 4. Given a non-target Device already binds a routed key, then the GUI rejects the conflict and shows the target that owns the key.
@@ -87,7 +87,7 @@ An owner commits a composed Configuration without risking the only working one.
 
 **Acceptance**
 
-1. Given a valid Model, when the owner presses Prepare, then the GUI validates, composes, detects the Remote, verifies the Backup and current Configuration, runs the Dry Run and shows a summary: Remote identity, Backup digest, Container size, chunks, data packets and reboot choice.
+1. Given a valid Model, when the owner presses Prepare, then the GUI validates, composes, detects the Remote, verifies the Backup and current Configuration, runs the Dry Run and shows a summary of Remote identity and the reboot choice, plus, with Settings → Show technical details enabled, the Backup digest, Container size, chunks and data packets.
 2. Given the summary, when the owner presses Write to remote, then the committed Write runs with visible progress through reset, open, chunked write, checksum check, flush, close, Read-Back and reboot.
 3. Given no verified Backup, a Skin mismatch, a current Configuration that differs from the Backup, or an invalid Container, then Prepare refuses before any erase and names the failed check.
 4. Given a committed Write, then a read-back mismatch exits the operation with the recovery message, names the Backup and offers Restore.
@@ -99,7 +99,7 @@ An owner returns the Remote to a known-good Backup.
 
 **Acceptance**
 
-1. Given a managed Backup whose sidecar validation is `ok`, when the owner selects Restore, then the GUI runs the same Prepare summary and requires the separate Restore confirmation.
+1. Given a managed Backup whose sidecar validation is `ok`, when the owner selects Restore, then the GUI runs the same Prepare summary (Remote identity and the reboot choice, plus, with Settings → Show technical details enabled, the Backup size in bytes and the write chunk count) and requires the separate Restore confirmation.
 2. Given a Backup whose model or Skin differs from the connected Remote, or whose validation is not `ok`, then Restore refuses before opening the Remote for writing.
 3. Given a committed Restore, then the Read-Back equals the Backup byte for byte and the Remote remains operational after reboot.
 
@@ -117,7 +117,7 @@ An owner prepares a Configuration before plugging in the Remote, or moves it to 
 
 - **GUI-FR-001**: The GUI MUST be a native Linux x86_64 application built with Iced 0.14, shipped for the MVP as a plain binary; no AppImage, Flatpak or AUR artifact is required for the first release.
 - **GUI-FR-002**: The repository MUST be a Cargo workspace with `remote-rebirth-core`, `remote-rebirth-cli` and `remote-rebirth-gui` packages; the CLI binary name and contract MUST remain `remote-rebirth`.
-- **GUI-FR-003**: The core library MUST expose typed operations and progress events, MUST NOT write to stdout or stderr, and MUST NOT contain a network client. The CLI adapter owns clap, JSON output, tracing and exit codes.
+- **GUI-FR-003**: The core library MUST expose typed operations and progress events, MUST NOT write to stdout or stderr on its own, and MUST NOT contain a network client. The CLI adapter lives in the core behind its default `cli` feature and owns clap, JSON output, progress rendering and exit-code mapping; the `remote-rebirth` binary only builds the runtime and calls `run`.
 - **GUI-FR-004**: The GUI MUST use a sidebar with Remote, Devices, Key Map, Activities, Favourites, IR Library and Settings, plus a persistent footer with connection status, Remote identity, save state and estimated Container size.
 - **GUI-FR-005**: The GUI MUST be a direct-form editor: no setup wizard, no mandatory next/back sequence. A first-run consent modal for the IR Library download is permitted.
 - **GUI-FR-006**: The GUI MUST detect and display the Remote identity, Skin, architecture, firmware version, GUID and serial number; it MUST lock the active Model's Skin to a connected Remote and MUST require an explicit resolution when the Model's Skin differs.
@@ -191,10 +191,11 @@ The v1 rule “every declared Command must be referenced” is replaced:
   - `Progress` events for step transitions, bytes written and read-back comparison; a callback or channel sink supplied by the caller.
   - A cancellation token checked between steps; the commit path itself is not interruptible after the reset/open.
   - Pure Model validation and routing expansion; no I/O beyond files, transport traits and clock.
-  - No `clap`, no `tracing-subscriber`, no stdout/stderr, no HTTP client.
+  - The CLI adapter, behind the default `cli` feature: the `run(args, runtime) -> Exit` seam, clap definitions, JSON rendering, progress on stderr and exit-code mapping.
+  - No `tracing-subscriber`, no stdout/stderr of its own, no HTTP client.
 - `remote-rebirth-cli`:
-  - The existing `run(args, runtime) -> Exit` seam, clap definitions, JSON rendering, stderr progress and exit-code mapping.
-  - Uses the core operations; behaviour changes only where this spec requires (v2 Models, unreferenced Commands, routing).
+  - A thin runtime builder: `crates/cli/src/main.rs` initialises the tracing subscriber on stderr, builds the `Runtime` and calls `remote_rebirth_core::run`; the binary declares no clap or `serde_json` dependency of its own.
+  - Behaviour changes only where this spec requires (v2 Models, unreferenced Commands, routing).
 - `remote-rebirth-gui`:
   - Iced 0.14 application. Core operations run on a worker thread; progress events arrive through an Iced subscription. The UI never blocks on USB or file I/O.
   - A single USB session owner; concurrent CLI/GUI operations are refused by the transport or surface a device-busy error.

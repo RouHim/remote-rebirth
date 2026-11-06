@@ -146,7 +146,7 @@ pub fn build(
         }
         let group = u16::from(group_of[command_lists.len()]);
         let mut indices = Vec::with_capacity(device.commands.len());
-        let mut record = 0u8;
+        let mut record = 0u16;
         for imported in device_imports {
             if imported.is_none() {
                 indices.push(None);
@@ -154,19 +154,22 @@ pub fn build(
             }
             let index = u16::try_from(lists.len())
                 .map_err(|_| Error::Validation("the action list table overflows a u16".into()))?;
-            let body = [
-                Instruction::new(0x07, CANCEL_TIMERS),
-                Instruction::new(SEND, (group << 8) | u16::from(record)),
-                Instruction::new(DELAY, (group << 8) | u16::from(DEVICE_QUANTITY)),
-            ];
-            lists.push(Piece::new(action_list_bytes(&body)?, "slot-10-list"));
-            indices.push(Some(index));
-            record = record.checked_add(1).ok_or_else(|| {
+            let slot = u8::try_from(record).map_err(|_| {
                 Error::Validation(format!(
                     "Device '{}' declares more than 256 sent Commands",
                     device.name
                 ))
             })?;
+            let body = [
+                Instruction::new(0x07, CANCEL_TIMERS),
+                Instruction::new(SEND, (group << 8) | u16::from(slot)),
+                Instruction::new(DELAY, (group << 8) | u16::from(DEVICE_QUANTITY)),
+            ];
+            lists.push(Piece::new(action_list_bytes(&body)?, "slot-10-list"));
+            indices.push(Some(index));
+            record = record
+                .checked_add(1)
+                .ok_or_else(|| Error::Validation("too many sent Commands".into()))?;
         }
         command_lists.push(indices);
     }
@@ -408,23 +411,26 @@ pub fn build(
     let mut record_indices: Vec<Vec<Option<u8>>> = vec![Vec::new(); model.devices.len()];
     let mut record_pieces = Vec::new();
     for (device, device_imports) in imports.iter().enumerate() {
-        let mut record = 0u8;
+        let mut record = 0u16;
         for imported in device_imports {
             let Some(imported) = imported else {
                 record_indices[device].push(None);
                 continue;
             };
-            let (data, header, header_offset) = add_record(&mut layout, &imported.record)?;
-            group_records[usize::from(group_of[device])].push((data, header_offset));
-            record_pieces.push(data);
-            record_pieces.push(header);
-            record_indices[device].push(Some(record));
-            record = record.checked_add(1).ok_or_else(|| {
+            let slot = u8::try_from(record).map_err(|_| {
                 Error::Validation(format!(
                     "Device '{}' declares more than 256 sent Commands",
                     model.devices[device].name
                 ))
             })?;
+            let (data, header, header_offset) = add_record(&mut layout, &imported.record)?;
+            group_records[usize::from(group_of[device])].push((data, header_offset));
+            record_pieces.push(data);
+            record_pieces.push(header);
+            record_indices[device].push(Some(slot));
+            record = record
+                .checked_add(1)
+                .ok_or_else(|| Error::Validation("too many sent Commands".into()))?;
         }
     }
     let mut group_indices = Vec::with_capacity(group_count);
