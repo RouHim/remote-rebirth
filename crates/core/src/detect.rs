@@ -5,12 +5,16 @@
 //! is reported as unsupported rather than as no Remote; more than one Logitech device is an error,
 //! because the CLI never guesses which unit to open.
 
+#[cfg(feature = "cli")]
 use std::io::Write;
 
+#[cfg(feature = "cli")]
 use serde::Serialize;
 
 use crate::error::Error;
-use crate::profile::{self, ModelProfile};
+use crate::profile;
+#[cfg(feature = "cli")]
+use crate::profile::ModelProfile;
 use crate::protocol::REPORT_BYTES;
 use crate::sysinfo::{self, SysInfo};
 use crate::transport::{RemoteBackend, RemoteDescriptor, RemoteSelector, RemoteSession, read_file};
@@ -147,6 +151,7 @@ fn open(
     })
 }
 
+#[cfg(feature = "cli")]
 pub fn run(
     backend: &mut dyn RemoteBackend,
     json: bool,
@@ -161,6 +166,7 @@ pub fn run(
     }
 }
 
+#[cfg(feature = "cli")]
 fn report_harmony(opened: &OpenedRemote, json: bool, stdout: &mut dyn Write) -> Result<(), Error> {
     let info = &opened.sysinfo;
     let profile: Option<&ModelProfile> = profile::for_identity(info.architecture, info.skin);
@@ -234,6 +240,7 @@ fn report_harmony(opened: &OpenedRemote, json: bool, stdout: &mut dyn Write) -> 
     Ok(())
 }
 
+#[cfg(feature = "cli")]
 fn report_other(
     descriptor: &RemoteDescriptor,
     json: bool,
@@ -274,6 +281,7 @@ fn report_other(
     Ok(())
 }
 
+#[cfg(feature = "cli")]
 fn write_usb(stdout: &mut dyn Write, descriptor: &RemoteDescriptor) -> Result<(), Error> {
     writeln!(
         stdout,
@@ -289,6 +297,7 @@ fn write_usb(stdout: &mut dyn Write, descriptor: &RemoteDescriptor) -> Result<()
 }
 
 #[derive(Serialize)]
+#[cfg(feature = "cli")]
 struct DetectOutput<'a> {
     schema_version: u8,
     supported: bool,
@@ -305,6 +314,7 @@ struct DetectOutput<'a> {
 }
 
 #[derive(Serialize)]
+#[cfg(feature = "cli")]
 struct UsbIdentity<'a> {
     vendor_id: u16,
     product_id: u16,
@@ -315,6 +325,7 @@ struct UsbIdentity<'a> {
     address: u8,
 }
 
+#[cfg(feature = "cli")]
 impl<'a> From<&'a RemoteDescriptor> for UsbIdentity<'a> {
     fn from(descriptor: &'a RemoteDescriptor) -> Self {
         Self {

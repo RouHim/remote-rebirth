@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+#[cfg(feature = "cli")]
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -21,18 +22,30 @@ use crate::model::{self, Model};
 use crate::profile::ModelProfile;
 
 /// The model input schema, embedded so `compose --print-schema` needs no installed files.
-pub const MODEL_SCHEMA: &str = include_str!("../schema/model-v1.json");
+#[cfg(feature = "cli")]
+pub const MODEL_SCHEMA: &str = include_str!("../schema/model-v2.json");
 /// The resolved-model sidecar schema, embedded for `compose --print-resolved-schema`.
-pub const RESOLVED_SCHEMA: &str = include_str!("../schema/resolved-model-v1.json");
+#[cfg(feature = "cli")]
+pub const RESOLVED_SCHEMA: &str = include_str!("../schema/resolved-model-v2.json");
 
-pub fn run(
+/// A composed Container without any CLI formatting.
+#[derive(Debug, Clone)]
+pub struct ComposeReport {
+    pub container: PathBuf,
+    pub resolved_model: PathBuf,
+    pub size: u64,
+    pub sha256: String,
+    pub devices: usize,
+    pub favourites: usize,
+    pub unused: Vec<(String, String)>,
+}
+
+pub fn create(
     clock: &dyn Clock,
     model_path: &Path,
     out: &Path,
     overwrite: bool,
-    json: bool,
-    stdout: &mut dyn Write,
-) -> Result<(), Error> {
+) -> Result<ComposeReport, Error> {
     let span = tracing::info_span!("compose", model = %model_path.display(), out = %out.display());
     let _entered = span.enter();
 
@@ -44,6 +57,7 @@ pub fn run(
         ))
     })?;
     model::validate(&model, profile)?;
+    let unused = model::unused_commands(&model);
 
     let sidecar = sidecar_path(out);
     if !overwrite {
@@ -72,20 +86,41 @@ pub fn run(
         size = composed.bytes.len(),
         devices = composed.devices.len(),
         favourites = composed.favourites,
+        unused = unused.len(),
         resolved_model = %sidecar.display(),
         "composed Container"
     );
 
-    let digest = container::sha256_hex(&composed.bytes);
+    Ok(ComposeReport {
+        container: out.to_path_buf(),
+        resolved_model: sidecar,
+        size: composed.bytes.len() as u64,
+        sha256: container::sha256_hex(&composed.bytes),
+        devices: composed.devices.len(),
+        favourites: composed.favourites,
+        unused,
+    })
+}
+
+#[cfg(feature = "cli")]
+pub fn run(
+    clock: &dyn Clock,
+    model_path: &Path,
+    out: &Path,
+    overwrite: bool,
+    json: bool,
+    stdout: &mut dyn Write,
+) -> Result<(), Error> {
+    let report = create(clock, model_path, out, overwrite)?;
     if json {
         let output = ComposeOutput {
             schema_version: 1,
-            container: out.display().to_string(),
-            resolved_model: sidecar.display().to_string(),
-            size: composed.bytes.len() as u64,
-            sha256: digest,
-            devices: composed.devices.len(),
-            favourites: composed.favourites,
+            container: report.container.display().to_string(),
+            resolved_model: report.resolved_model.display().to_string(),
+            size: report.size,
+            sha256: report.sha256,
+            devices: report.devices,
+            favourites: report.favourites,
         };
         serde_json::to_writer_pretty(&mut *stdout, &output)?;
         writeln!(stdout)?;
@@ -95,11 +130,21 @@ pub fn run(
     writeln!(
         stdout,
         "Wrote Container {} ({} bytes, sha256 {})",
-        out.display(),
-        composed.bytes.len(),
-        digest
+        report.container.display(),
+        report.size,
+        report.sha256
     )?;
-    writeln!(stdout, "Wrote resolved model {}", sidecar.display())?;
+    writeln!(
+        stdout,
+        "Wrote resolved model {}",
+        report.resolved_model.display()
+    )?;
+    if !report.unused.is_empty() {
+        tracing::warn!(
+            unused = report.unused.len(),
+            "unreferenced Commands stay in the Model and are omitted from the Container"
+        );
+    }
     Ok(())
 }
 
@@ -110,17 +155,27 @@ fn model_directory(model_path: &Path) -> &Path {
     }
 }
 
-/// Import every Command's IR Source, in Device order and Command name order.
-fn import_commands(model: &Model, model_dir: &Path) -> Result<Vec<Vec<ImportedCommand>>, Error> {
+/// Import every referenced Command's IR Source, in Device order and Command name order. Commands
+/// the Model keeps but no key or Activity sends are left as `None`; they stay in the Model and are
+/// omitted from the Container and resolved sidecar.
+fn import_commands(
+    model: &Model,
+    model_dir: &Path,
+) -> Result<Vec<Vec<Option<ImportedCommand>>>, Error> {
+    let referenced = model::referenced_commands(model);
     let mut imports = Vec::with_capacity(model.devices.len());
     for device in &model.devices {
         let mut device_imports = Vec::with_capacity(device.commands.len());
         for (name, command) in &device.commands {
+            if !referenced.contains(&(device.name.clone(), name.clone())) {
+                device_imports.push(None);
+                continue;
+            }
             let context = format!("Command '{name}' on Device '{}'", device.name);
             let source = ir_source(&command.source, &context)?;
             let imported = ir::import(&source, model_dir, command.sends)
                 .map_err(|error| Error::Validation(format!("{context}: {error}")))?;
-            device_imports.push(imported);
+            device_imports.push(Some(imported));
         }
         imports.push(device_imports);
     }
@@ -167,6 +222,7 @@ fn sidecar_path(out: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
+#[cfg(feature = "cli")]
 #[derive(Serialize)]
 struct ComposeOutput {
     schema_version: u8,
@@ -183,6 +239,8 @@ struct ResolvedModel {
     schema_version: u8,
     profile: String,
     skin: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    routing: Option<model::Routing>,
     devices: Vec<ResolvedDevice>,
     activity: model::Activity,
     favourites: Vec<model::Favourite>,
@@ -251,7 +309,7 @@ impl ResolvedModel {
     fn new(
         model: &Model,
         profile: &ModelProfile,
-        imports: &[Vec<ImportedCommand>],
+        imports: &[Vec<Option<ImportedCommand>>],
         composed: &Composed,
     ) -> Self {
         let devices = model
@@ -265,6 +323,7 @@ impl ResolvedModel {
             schema_version: model::SCHEMA_VERSION,
             profile: profile.id.to_string(),
             skin: model.skin,
+            routing: model.routing.clone(),
             devices,
             activity: model.activity.clone(),
             favourites: model.favourites.clone(),
@@ -276,23 +335,25 @@ impl ResolvedDevice {
     fn new(
         device: &model::Device,
         placement: &ComposedDevice,
-        imports: &[ImportedCommand],
+        imports: &[Option<ImportedCommand>],
     ) -> Self {
         let commands = device
             .commands
             .iter()
             .zip(imports)
             .zip(&placement.record_indices)
-            .map(|(((name, command), imported), index)| {
+            .filter_map(|(((name, command), imported), index)| {
+                let imported = imported.as_ref()?;
+                let index = index.as_ref()?;
                 let record = RecordSummary::of(placement.ir_group, *index, &imported.record);
-                (
+                Some((
                     name.clone(),
                     ResolvedCommand {
                         source: command.source.clone(),
                         provenance: imported.provenance.clone(),
                         record,
                     },
-                )
+                ))
             })
             .collect();
         Self {

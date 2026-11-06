@@ -72,7 +72,8 @@ pub struct ComposedDevice {
     /// The Device's map index in raw slot 6, where the key table is 0.
     pub map_index: u8,
     /// Each Command's record index in the Device's infrared group, in the model's Command order.
-    pub record_indices: Vec<u8>,
+    /// `None` means the Command is not sent and has no record in the Container.
+    pub record_indices: Vec<Option<u8>>,
 }
 
 /// A Device's key map entry waiting for the compiler order: the tag, and the label a collision names.
@@ -82,12 +83,13 @@ struct MapEntry {
 }
 
 /// Build the Container for `model`, whose Commands `imports` holds per Device in the model's command
-/// order. Every check the model validation cannot make — the profile's key layout, a favourite key's
-/// scan colliding with a bound key — is made here before a byte is laid out.
+/// order. `None` marks a Command no key or Activity sends; it is left out of the Container. Every
+/// check the model validation cannot make — the profile's key layout, a favourite key's scan
+/// colliding with a bound key — is made here before a byte is laid out.
 pub fn build(
     model: &Model,
     profile: &ModelProfile,
-    imports: &[Vec<ImportedCommand>],
+    imports: &[Vec<Option<ImportedCommand>>],
     built_at: &OffsetDateTime,
 ) -> Result<Composed, Error> {
     let skin = profile::skin_profile(profile, model.skin).ok_or_else(|| {
@@ -132,7 +134,7 @@ pub fn build(
     let start_up_map = order.first().map(|&device| map_of[device]);
     let mut lists: Vec<Piece> = start_up_lists_with(start_up_map)?;
     lists.extend(send_event_lists()?);
-    let mut command_lists: Vec<Vec<u16>> = Vec::with_capacity(model.devices.len());
+    let mut command_lists: Vec<Vec<Option<u16>>> = Vec::with_capacity(model.devices.len());
     for (device, device_imports) in model.devices.iter().zip(imports) {
         if device_imports.len() != device.commands.len() {
             return Err(Error::Internal(format!(
@@ -144,13 +146,12 @@ pub fn build(
         }
         let group = u16::from(group_of[command_lists.len()]);
         let mut indices = Vec::with_capacity(device.commands.len());
-        for (record, _) in device.commands.iter().enumerate() {
-            let record = u8::try_from(record).map_err(|_| {
-                Error::Validation(format!(
-                    "Device '{}' declares more than 256 Commands",
-                    device.name
-                ))
-            })?;
+        let mut record = 0u8;
+        for imported in device_imports {
+            if imported.is_none() {
+                indices.push(None);
+                continue;
+            }
             let index = u16::try_from(lists.len())
                 .map_err(|_| Error::Validation("the action list table overflows a u16".into()))?;
             let body = [
@@ -159,7 +160,13 @@ pub fn build(
                 Instruction::new(DELAY, (group << 8) | u16::from(DEVICE_QUANTITY)),
             ];
             lists.push(Piece::new(action_list_bytes(&body)?, "slot-10-list"));
-            indices.push(index);
+            indices.push(Some(index));
+            record = record.checked_add(1).ok_or_else(|| {
+                Error::Validation(format!(
+                    "Device '{}' declares more than 256 sent Commands",
+                    device.name
+                ))
+            })?;
         }
         command_lists.push(indices);
     }
@@ -282,11 +289,84 @@ pub fn build(
             entries.push(MapEntry {
                 entry: TaggedEntry {
                     tag: PRESS | scan,
-                    operand: command_lists[device][command_index],
+                    operand: command_lists[device][command_index].ok_or_else(|| {
+                        Error::Internal(format!(
+                            "Device '{}' binds key '{key}' to a Command with no send list",
+                            model.devices[device].name
+                        ))
+                    })?,
                     opcode: CALL,
                 },
                 label: format!("key '{key}'"),
             });
+        }
+        if let Some(routing) = &model.routing {
+            for (function, target, keys) in [
+                (
+                    "volume",
+                    routing.volume.as_deref(),
+                    crate::model::Routing::VOLUME_KEYS,
+                ),
+                (
+                    "channel",
+                    routing.channel.as_deref(),
+                    crate::model::Routing::CHANNEL_KEYS,
+                ),
+            ] {
+                let Some(target) = target else { continue };
+                let target_device = model
+                    .devices
+                    .iter()
+                    .position(|candidate| candidate.name == target)
+                    .ok_or_else(|| {
+                        Error::Validation(format!(
+                            "routing {function} names missing Device '{target}'"
+                        ))
+                    })?;
+                if target_device == device {
+                    continue;
+                }
+                for key in keys {
+                    let command = model.devices[target_device].keys.get(*key).ok_or_else(|| {
+                        Error::Validation(format!(
+                            "routing {function} targets Device '{target}', which does not bind \
+                             key '{key}'"
+                        ))
+                    })?;
+                    let command_index = model.devices[target_device]
+                        .commands
+                        .keys()
+                        .position(|name| name == command)
+                        .ok_or_else(|| {
+                            Error::Validation(format!(
+                                "routing {function} targets Device '{target}', whose key '{key}' \
+                                 names missing Command '{command}'"
+                            ))
+                        })?;
+                    let scan = profile::key_scan(profile, key).ok_or_else(|| {
+                        Error::Validation(format!(
+                            "routing {function} names key '{key}', which profile '{}' has no scan \
+                             code for",
+                            profile.id
+                        ))
+                    })?;
+                    entries.push(MapEntry {
+                        entry: TaggedEntry {
+                            tag: PRESS | scan,
+                            operand: command_lists[target_device][command_index].ok_or_else(
+                                || {
+                                    Error::Internal(format!(
+                                        "routing {function} targets Device '{target}', whose key \
+                                     '{key}' has no send list"
+                                    ))
+                                },
+                            )?,
+                            opcode: CALL,
+                        },
+                        label: format!("key '{key}' inherited from '{target}'"),
+                    });
+                }
+            }
         }
         if device == channel_device {
             for (favourite, &(scan, list)) in model.favourites.iter().zip(&favourites) {
@@ -325,20 +405,26 @@ pub fn build(
     // The infrared groups: one piece per group holding its record count and pointers, one two-piece
     // record per Command, then the group table the slot names.
     let mut group_records: Vec<Vec<(usize, usize)>> = vec![Vec::new(); group_count];
-    let mut record_indices: Vec<Vec<u8>> = vec![Vec::new(); model.devices.len()];
+    let mut record_indices: Vec<Vec<Option<u8>>> = vec![Vec::new(); model.devices.len()];
     let mut record_pieces = Vec::new();
     for (device, device_imports) in imports.iter().enumerate() {
-        for (index, imported) in device_imports.iter().enumerate() {
+        let mut record = 0u8;
+        for imported in device_imports {
+            let Some(imported) = imported else {
+                record_indices[device].push(None);
+                continue;
+            };
             let (data, header, header_offset) = add_record(&mut layout, &imported.record)?;
             group_records[usize::from(group_of[device])].push((data, header_offset));
             record_pieces.push(data);
             record_pieces.push(header);
-            record_indices[device].push(u8::try_from(index).map_err(|_| {
+            record_indices[device].push(Some(record));
+            record = record.checked_add(1).ok_or_else(|| {
                 Error::Validation(format!(
-                    "Device '{}' declares more than 256 Commands",
+                    "Device '{}' declares more than 256 sent Commands",
                     model.devices[device].name
                 ))
-            })?);
+            })?;
         }
     }
     let mut group_indices = Vec::with_capacity(group_count);
@@ -426,7 +512,7 @@ pub fn build(
 fn activity_body(
     model: &Model,
     activity: &Activity,
-    command_lists: &[Vec<u16>],
+    command_lists: &[Vec<Option<u16>>],
     group_of: &[u8],
     channel_map: u8,
 ) -> Result<Vec<Instruction>, Error> {
@@ -456,7 +542,16 @@ fn activity_body(
                         step.device
                     ))
                 })?;
-            body.push(Instruction::new(CALL, command_lists[device][index]));
+            body.push(Instruction::new(
+                CALL,
+                command_lists[device][index].ok_or_else(|| {
+                    Error::Internal(format!(
+                        "Watch TV Activity step for Device '{}' names Command '{command}' with no \
+                         send list",
+                        step.device
+                    ))
+                })?,
+            ));
         }
         if step.delay_ms > 0 {
             let tenths = (step.delay_ms.saturating_add(99) / 100).clamp(1, 255);
@@ -477,7 +572,11 @@ fn activity_body(
 
 /// The action list each digit 0 to 9 calls: the channel Device's send list for its `number_*` key, or
 /// the start-up's empty list where the Device binds none.
-fn digit_lists(model: &Model, channel_device: usize, command_lists: &[Vec<u16>]) -> [u16; 10] {
+fn digit_lists(
+    model: &Model,
+    channel_device: usize,
+    command_lists: &[Vec<Option<u16>>],
+) -> [u16; 10] {
     let device = &model.devices[channel_device];
     std::array::from_fn(|digit| {
         let key = format!("number_{digit}");
@@ -485,7 +584,8 @@ fn digit_lists(model: &Model, channel_device: usize, command_lists: &[Vec<u16>])
             .keys
             .get(&key)
             .and_then(|command| device.commands.keys().position(|name| name == command))
-            .map_or(START_UP_EMPTY, |index| command_lists[channel_device][index])
+            .and_then(|index| command_lists[channel_device][index])
+            .unwrap_or(START_UP_EMPTY)
     })
 }
 

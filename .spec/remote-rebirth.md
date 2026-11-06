@@ -3,10 +3,11 @@
 **Created**: 2026-11-05
 **Status**: Approved
 **Input**: Build a Rust CLI first, GUI later, for flashing a Harmony 300 over USB without internet access.
+**Related**: `.spec/remote-rebirth-gui.md` — native desktop GUI, Model schema v2 routing, and the IR Library.
 
 ## Goal
 
-A Linux user with a Logitech Harmony 300 cannot reconfigure it once Logitech's service disappears. This feature is a native Rust CLI that identifies the remote over USB, backs up its configuration, builds a new configuration entirely on the local machine from a declarative JSON model plus locally imported IR codes, and writes it back with verification. It performs no network access and does not depend on any Logitech account or service. The CLI is the v1 surface; a GUI is explicitly out of scope.
+A Linux user with a Logitech Harmony 300 cannot reconfigure it once Logitech's service disappears. This feature is a native Rust CLI that identifies the remote over USB, backs up its configuration, builds a new configuration entirely on the local machine from a declarative JSON model plus locally imported IR codes, and writes it back with verification. It performs no network access and does not depend on any Logitech account or service. The CLI is the v1 surface. The desktop GUI is specified separately in `.spec/remote-rebirth-gui.md`; it consumes the same core library, while the CLI and core remain network-free.
 
 ## User Scenarios
 
@@ -67,9 +68,9 @@ A maintainer prepares support for the Harmony 350, which shares the protocol and
 - **FR-005**: `inspect` MUST parse the architecture-16 container (GSPM header, LWJL and PTYY markers, 15 pointer slots) and emit versioned JSON describing container metadata, devices, key maps, the Watch TV binding, favourites and IR records.
 - **FR-006**: `compose` MUST accept a versioned JSON model declaring devices, each device's key placement, the Watch TV activity and favourite channels, and MUST reject a model that exceeds the active profile's device, group or favourite limits.
 - **FR-007**: `compose` MUST assign each declared device to exactly one of the four device keys and MUST reject duplicate key assignments.
-- **FR-008**: `compose` MUST create the IR records required by every declared command, and MUST reject any command whose protocol it cannot encode.
+- **FR-008**: `compose` MUST create the IR records required by every Command referenced by a Key Map, the Watch TV Activity or a routed target's required bindings; MUST reject a referenced Command whose protocol it cannot encode; and MUST omit unreferenced Commands from the Container and the resolved-model sidecar.
 - **FR-009**: IR import MUST accept Pronto hex, LIRC configuration files and Flipper-IRDB files, and MUST record each command's source and provenance in the composed model.
-- **FR-010**: The CLI MUST NOT read, ship, embed or require Logitech's device catalogue; all IR data MUST come from user-supplied open-format files.
+- **FR-010**: The CLI MUST NOT read, ship, embed or require Logitech's device catalogue; all CLI IR data MUST come from user-supplied open-format files. The GUI's optional IR Library download is specified separately and uses only open, licensed data.
 - **FR-011**: Every configuration built from nothing MUST bind firmware event `0xFF` to the action list called by the `0x30` entry, and the validator MUST reject a configuration that uses IR groups above 3 without that binding.
 - **FR-012**: `write` MUST default to a dry run and MUST require an explicit commit flag before opening `/cfg/usercfg` for writing.
 - **FR-013**: Before opening for writing, `write` MUST verify that a backup exists, that its model and skin match the connected remote, that the remote's current configuration equals that backup or is empty, and that the container's size and checksum are valid.
@@ -78,9 +79,10 @@ A maintainer prepares support for the Harmony 350, which shares the protocol and
 - **FR-016**: On a checksum mismatch, short read, malformed packet, USB disconnect or any protocol refusal, the CLI MUST abort before flush where the sequence permits, MUST journal the last acknowledged step, and MUST exit non-zero.
 - **FR-017**: The CLI MUST reject a container larger than the remote's 256 KiB configuration region.
 - **FR-018**: The CLI MUST never open firmware paths for writing; firmware writes are out of scope.
-- **FR-019**: All commands MUST operate with networking disabled and MUST contain no network client, telemetry or update check.
+- **FR-019**: All CLI commands MUST operate with networking disabled, and the CLI and core library MUST contain no network client, telemetry or update check. The GUI's explicit IR Library download is the only network path and is specified separately.
 - **FR-020**: Machine-readable output MUST be available as JSON on stdout, with progress and diagnostics on stderr; exit codes MUST be documented and stable.
 - **FR-021**: Model-specific values MUST live in a data-driven model profile (product ID, accepted skins, architecture, maximum devices, maximum IR groups, favourite capacity, key layout, long-press capability); the v1 build MUST enable the Harmony 300 profile only.
+- **FR-022**: `compose` MUST accept Model schema v1 and v2. A v2 Model MAY declare `routing.volume` and `routing.channel`; `compose` MUST expand each into cross-device key-map entries from the target Device's own bindings, MUST reject a non-target Device binding a routed key, and MUST reject a target missing a required binding.
 
 ## Key Entities
 
@@ -88,6 +90,8 @@ A maintainer prepares support for the Harmony 350, which shares the protocol and
 - **Model Profile**: the declared capabilities and layout for one model family, used by detection, composition and validation.
 - **Configuration**: the architecture-16 container written to `/cfg/usercfg`, including its header, slot table, IR records, devices, key maps, activity binding and favourites.
 - **Device**: a named appliance assigned to one device key, with a set of named commands.
+- **Key Map**: one Device's mapping of canonical key names to its Commands.
+- **Routing**: a Model v2 assignment of the volume or channel function to a target Device; Compose copies that Device's bindings into every other Device's Key Map.
 - **Command / IR Record**: a named infrared command encoded as the pulse record the remote stores.
 - **Activity**: the single Watch TV binding that switches declared devices on and selects their inputs.
 - **Favourite**: a channel number bound to one of the remote's favourite keys.
@@ -104,7 +108,9 @@ A maintainer prepares support for the Harmony 350, which shares the protocol and
 - USB disconnects mid-write: journal the last acknowledged step and report the recovery procedure.
 - The model declares more devices, groups or favourites than the active profile allows: reject before composing.
 - Two devices are assigned to the same key: reject.
-- An IR command uses an unsupported protocol: reject with the protocol name and the command name.
+- A referenced IR command uses an unsupported protocol: reject with the protocol name and the command name; an unreferenced command does not block Compose.
+- A non-target Device binds a key owned by an enabled routing function: reject and name both Devices.
+- A routing target does not bind a key required by its function: reject and name the Device and key.
 - The composed container exceeds 256 KiB: reject.
 - Skins 78 (US) and 79 (EMEA) are both accepted; key printing differences do not alter the configuration.
 - A favourite channel count above the active profile's capacity: reject.
@@ -128,7 +134,7 @@ A maintainer prepares support for the Harmony 350, which shares the protocol and
 - The project is GPLv3 to remain compatible with concordance, harmony-decompiler and chorus.
 - The project is named Remote Rebirth; “Logitech Harmony 300” is used descriptively only, and no Logitech mark appears in the product name.
 - “Flash” in this feature means writing configuration only; firmware writes are excluded.
-- A GUI is out of scope for this specification and will consume the same core library later.
+- The desktop GUI is specified in `.spec/remote-rebirth-gui.md`; it consumes the same core library. The GUI's optional IR Library download is the only network client in the product; the CLI and core remain network-free.
 
 ## Success Criteria
 

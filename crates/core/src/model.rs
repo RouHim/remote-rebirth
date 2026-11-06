@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use crate::error::Error;
 use crate::profile::{self, ModelProfile};
 
-pub const SCHEMA_VERSION: u8 = 1;
+pub const SCHEMA_VERSION: u8 = 2;
+pub const MIN_SCHEMA_VERSION: u8 = 1;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -15,9 +16,27 @@ pub struct Model {
     pub profile: String,
     pub skin: u8,
     pub devices: Vec<Device>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing: Option<Routing>,
     pub activity: Activity,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub favourites: Vec<Favourite>,
+}
+
+/// Assign the volume or channel function to one Device. Compose copies that Device's own key
+/// bindings into every other Device's map.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Routing {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<String>,
+}
+
+impl Routing {
+    pub const VOLUME_KEYS: &'static [&'static str] = &["volume_up", "volume_down", "volume_mute"];
+    pub const CHANNEL_KEYS: &'static [&'static str] = &["channel_up", "channel_down"];
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -139,11 +158,16 @@ pub fn load(path: &Path) -> Result<Model, Error> {
 }
 
 pub fn validate(model: &Model, profile: &ModelProfile) -> Result<(), Error> {
-    if model.schema_version != SCHEMA_VERSION {
+    if !(MIN_SCHEMA_VERSION..=SCHEMA_VERSION).contains(&model.schema_version) {
         return Err(Error::Validation(format!(
-            "unsupported model schema_version {}; expected {SCHEMA_VERSION}",
+            "unsupported model schema_version {}; expected {MIN_SCHEMA_VERSION} or {SCHEMA_VERSION}",
             model.schema_version
         )));
+    }
+    if model.schema_version == 1 && model.routing.is_some() {
+        return Err(Error::Validation(
+            "model schema_version 1 cannot declare routing; use schema_version 2".into(),
+        ));
     }
     if model.profile != profile.id {
         return Err(Error::Validation(format!(
@@ -168,7 +192,6 @@ pub fn validate(model: &Model, profile: &ModelProfile) -> Result<(), Error> {
 
     let mut device_names = BTreeSet::new();
     let mut device_keys = BTreeSet::new();
-    let mut referenced: BTreeSet<(String, String)> = BTreeSet::new();
 
     for device in &model.devices {
         if device.name.trim().is_empty() {
@@ -226,7 +249,6 @@ pub fn validate(model: &Model, profile: &ModelProfile) -> Result<(), Error> {
                     device.name
                 )));
             }
-            referenced.insert((device.name.clone(), command_name.clone()));
         }
     }
 
@@ -271,19 +293,11 @@ pub fn validate(model: &Model, profile: &ModelProfile) -> Result<(), Error> {
                     step.device
                 )));
             }
-            referenced.insert((device.name.clone(), command_name.clone()));
         }
     }
 
-    for device in &model.devices {
-        for command_name in device.commands.keys() {
-            if !referenced.contains(&(device.name.clone(), command_name.clone())) {
-                return Err(Error::Validation(format!(
-                    "Command '{}' on Device '{}' is not referenced by keys or the Watch TV Activity",
-                    command_name, device.name
-                )));
-            }
-        }
+    if let Some(routing) = &model.routing {
+        validate_routing(model, routing)?;
     }
 
     if model.favourites.len() > skin.favourite_capacity {
@@ -316,6 +330,88 @@ pub fn validate(model: &Model, profile: &ModelProfile) -> Result<(), Error> {
         }
     }
 
+    Ok(())
+}
+
+/// Every Command the Container will actually send: all bound keys plus the Activity's power and
+/// input. Routing targets add no Commands of their own; their keys are already bound.
+pub fn referenced_commands(model: &Model) -> BTreeSet<(String, String)> {
+    let mut referenced = BTreeSet::new();
+    for device in &model.devices {
+        for command in device.keys.values() {
+            referenced.insert((device.name.clone(), command.clone()));
+        }
+    }
+    for step in &model.activity.steps {
+        for command in [step.power.as_ref(), step.input.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            referenced.insert((step.device.clone(), command.clone()));
+        }
+    }
+    referenced
+}
+
+/// Commands the Model keeps for editing but Compose will not write.
+pub fn unused_commands(model: &Model) -> Vec<(String, String)> {
+    let referenced = referenced_commands(model);
+    let mut unused = Vec::new();
+    for device in &model.devices {
+        for command in device.commands.keys() {
+            if !referenced.contains(&(device.name.clone(), command.clone())) {
+                unused.push((device.name.clone(), command.clone()));
+            }
+        }
+    }
+    unused
+}
+
+fn validate_routing(model: &Model, routing: &Routing) -> Result<(), Error> {
+    if let Some(target) = &routing.volume {
+        validate_routing_function(model, "volume", target, Routing::VOLUME_KEYS)?;
+    }
+    if let Some(target) = &routing.channel {
+        validate_routing_function(model, "channel", target, Routing::CHANNEL_KEYS)?;
+    }
+    Ok(())
+}
+
+fn validate_routing_function(
+    model: &Model,
+    function: &str,
+    target: &str,
+    keys: &[&str],
+) -> Result<(), Error> {
+    let target_device = model
+        .devices
+        .iter()
+        .find(|device| device.name == target)
+        .ok_or_else(|| {
+            Error::Validation(format!(
+                "routing {function} names missing Device '{target}'"
+            ))
+        })?;
+    for key in keys {
+        if !target_device.keys.contains_key(*key) {
+            return Err(Error::Validation(format!(
+                "routing {function} targets Device '{target}', which does not bind key '{key}'"
+            )));
+        }
+    }
+    for device in &model.devices {
+        if device.name == target {
+            continue;
+        }
+        for key in keys {
+            if device.keys.contains_key(*key) {
+                return Err(Error::Validation(format!(
+                    "Device '{}' binds key '{key}', which routing {function} assigns to '{target}'",
+                    device.name
+                )));
+            }
+        }
+    }
     Ok(())
 }
 

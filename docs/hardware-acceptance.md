@@ -60,6 +60,23 @@ Remote before treating the write path as proven.
 - [ ] A disconnect mid-write journals the last acknowledged step and reports the recovery procedure.
 - [ ] The Journal at `$XDG_STATE_HOME/remote-rebirth/journal.jsonl` contains the expected records.
 
+## GUI first slice
+
+Run `target/release/remote-rebirth-gui` on the machine with the Remote attached.
+
+- [ ] The footer reports `Harmony 300`, Skin 79, firmware 1.4.0 after Detect.
+- [ ] Backup now writes a managed Backup and its sidecar under the app data directory.
+- [ ] Adding a Device with a local Pronto/LIRC/Flipper Command validates the Model.
+- [ ] Selecting a Key in the diagram and assigning a Command updates both the diagram and the table.
+- [ ] Setting Volume controls to the TV and Channel controls to the cable Device composes a
+      Container whose non-target Key Maps contain the routed scans.
+- [ ] Prepare Write captures a fresh Backup, composes, Dry Runs, and shows bytes, chunks, data
+      packets and the Backup digest.
+- [ ] Commit Write completes, the Read-Back equals the Container, and the Remote reboots.
+- [ ] Prepare Restore and Commit Restore return the Remote to a verified Backup byte for byte.
+
+The bench receiver checks in the committed Write section are also the routing acceptance gate.
+
 ## Record
 
 Record the Remote's identity, firmware, skin, the Backup digest, the composed Container digest, and

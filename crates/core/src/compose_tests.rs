@@ -363,7 +363,7 @@ fn the_resolved_model_records_each_commands_provenance() {
 
     let resolved: Value =
         serde_json::from_slice(&std::fs::read(sidecar(&out)).expect("sidecar")).expect("json");
-    assert_eq!(resolved["schema_version"].as_u64(), Some(1));
+    assert_eq!(resolved["schema_version"].as_u64(), Some(2));
     assert_eq!(resolved["profile"].as_str(), Some("harmony_300"));
     assert_eq!(resolved["skin"].as_u64(), Some(79));
 
@@ -696,4 +696,94 @@ fn the_resolved_model_validates_against_its_published_schema() {
     model_validator
         .validate(&two_device_model(79, true))
         .expect("the model input validates against the embedded schema");
+}
+
+#[test]
+fn unreferenced_commands_are_omitted_from_container_and_resolved_model() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let mut model = two_device_model(79, false);
+    model["devices"][0]["commands"]["unused"] =
+        json!({ "source": { "format": "pronto", "hex": RAW_TV_POWER } });
+    let model = write_model(directory.path(), &model);
+    let out = directory.path().join("container.bin");
+    let (exit, _, stderr) = compose(&model, &out, &[]);
+    assert_eq!(exit, Exit(0), "{stderr}");
+
+    let value = inspect_json(&out);
+    assert_eq!(
+        value["devices"][0]["record_count"].as_u64(),
+        Some(3),
+        "the unreferenced Command has no IR record"
+    );
+
+    let resolved: Value =
+        serde_json::from_slice(&std::fs::read(sidecar(&out)).expect("sidecar")).expect("json");
+    assert!(
+        resolved["devices"][0]["commands"].get("unused").is_none(),
+        "the unreferenced Command is omitted from the resolved model"
+    );
+    assert_eq!(
+        resolved["devices"][0]["commands"]
+            .as_object()
+            .expect("commands")
+            .len(),
+        3
+    );
+}
+
+#[test]
+fn routing_copies_target_key_bindings_into_other_device_maps() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let mut model = two_device_model(79, false);
+    model["schema_version"] = json!(2);
+    for key in crate::model::Routing::VOLUME_KEYS {
+        model["devices"][0]["commands"][*key] =
+            json!({ "source": { "format": "pronto", "hex": RAW_VOLUME_UP } });
+        model["devices"][0]["keys"][*key] = json!(*key);
+    }
+    model["routing"] = json!({ "volume": "TV" });
+    let model = write_model(directory.path(), &model);
+    let out = directory.path().join("container.bin");
+    let (exit, _, stderr) = compose(&model, &out, &[]);
+    assert_eq!(exit, Exit(0), "{stderr}");
+
+    let resolved: Value =
+        serde_json::from_slice(&std::fs::read(sidecar(&out)).expect("sidecar")).expect("json");
+    assert_eq!(resolved["routing"]["volume"].as_str(), Some("TV"));
+    let schema: Value =
+        serde_json::from_str(crate::compose::RESOLVED_SCHEMA).expect("resolved schema");
+    jsonschema::validator_for(&schema)
+        .expect("compile schema")
+        .validate(&resolved)
+        .expect("the routed resolved model validates");
+
+    let value = inspect_json(&out);
+    let maps = value["key_maps"].as_array().expect("maps");
+    let scans = |map: usize| -> Vec<u64> {
+        let mut scans: Vec<u64> = maps[map]["entries"]
+            .as_array()
+            .expect("entries")
+            .iter()
+            .filter(|entry| entry["opcode"].as_u64() == Some(0x7F))
+            .map(|entry| entry["scan_code"].as_u64().expect("scan"))
+            .collect();
+        scans.sort();
+        scans
+    };
+    let volume_scans: Vec<u64> = crate::model::Routing::VOLUME_KEYS
+        .iter()
+        .filter_map(|key| crate::profile::key_scan(&crate::profile::HARMONY_300, key))
+        .map(u64::from)
+        .collect();
+    for scan in volume_scans {
+        assert!(
+            scans(2).contains(&scan),
+            "the Cable map inherits TV's volume scan {scan}"
+        );
+    }
+    assert_eq!(
+        value["devices"][1]["record_count"].as_u64(),
+        Some(3),
+        "routing adds key entries, not Cable IR records"
+    );
 }

@@ -1,8 +1,11 @@
 use std::fs;
+#[cfg(feature = "cli")]
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+#[cfg(feature = "cli")]
+use serde::Serialize;
 
 use crate::clock::Clock;
 use crate::container::{self, MAX_CONTAINER_SIZE};
@@ -18,33 +21,83 @@ use crate::transport::{RemoteBackend, RemoteDescriptor, RemoteSelector, RemoteSe
 
 /// The flags a Write or Restore shares.
 #[derive(Debug, Clone, Copy)]
+#[cfg(feature = "cli")]
 pub struct Options {
     pub commit: bool,
     pub no_reboot: bool,
     pub json: bool,
 }
 
-pub fn run(
+/// A prepared or committed Write without any CLI formatting.
+#[derive(Debug, Clone)]
+pub struct WriteReport {
+    pub operation: &'static str,
+    pub commit: bool,
+    pub container: Option<PathBuf>,
+    pub backup: PathBuf,
+    pub size: usize,
+    pub backup_sha256: String,
+    pub bytes: usize,
+    pub chunks: usize,
+    pub data_packets: usize,
+    pub reboot: bool,
+    pub journal: Option<PathBuf>,
+}
+
+impl WriteReport {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        operation: &'static str,
+        commit: bool,
+        container: Option<&Path>,
+        backup: &Path,
+        size: usize,
+        backup_sha256: &str,
+        plan: WritePlan,
+        no_reboot: bool,
+        journal: Option<&Path>,
+    ) -> Self {
+        Self {
+            operation,
+            commit,
+            container: container.map(Path::to_path_buf),
+            backup: backup.to_path_buf(),
+            size,
+            backup_sha256: backup_sha256.to_string(),
+            bytes: plan.bytes,
+            chunks: plan.chunks,
+            data_packets: plan.data_packets,
+            reboot: !no_reboot,
+            journal: journal.map(Path::to_path_buf),
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn perform(
     backend: &mut dyn RemoteBackend,
     clock: &dyn Clock,
     state_dir: &Path,
     container_path: &Path,
     backup_path: &Path,
-    options: Options,
-    stdout: &mut dyn Write,
-) -> Result<(), Error> {
+    commit: bool,
+    no_reboot: bool,
+    progress: &mut dyn FnMut(crate::Progress),
+) -> Result<WriteReport, Error> {
     let span = tracing::info_span!(
         "write",
         container = %container_path.display(),
         backup = %backup_path.display(),
-        commit = options.commit
+        commit
     );
     let _entered = span.enter();
 
+    progress(crate::Progress::Step("load"));
     let container = read_input(container_path, "Container")?;
     let parsed = validate_container(&container)?;
     let (backup, sidecar) = load_backup(backup_path)?;
 
+    progress(crate::Progress::Step("detect"));
     let detect::OpenedRemote {
         descriptor,
         sysinfo,
@@ -53,6 +106,7 @@ pub fn run(
     let profile = check_remote(&sysinfo, &sidecar)?;
     check_container(&parsed, &sysinfo, profile)?;
 
+    progress(crate::Progress::Step("verify"));
     let current = read_file(&mut *session, "/cfg/usercfg")?;
     let current = container::reconstruct_trailer(&current);
     if current != backup && !is_empty_configuration(&current) {
@@ -65,51 +119,93 @@ pub fn run(
 
     let write_plan = filewriter::plan(container.len());
 
-    if !options.commit {
-        report(
-            options.json,
-            stdout,
-            &WriteOutput::new(
-                filewriter::Operation::Write.as_str(),
-                false,
-                Some(container_path),
-                backup_path,
-                container.len(),
-                &sidecar.sha256,
-                write_plan,
-                options.no_reboot,
-                None,
-            ),
-        )?;
-        return Ok(());
-    }
-
-    let commit = filewriter::Commit {
-        operation: filewriter::Operation::Write,
-        container: &container,
-        backup: backup_path,
-        no_reboot: options.no_reboot,
-    };
-    tracing::info!("committed Write starting");
-    let mut journal = Journal::create(state_dir, clock, "write", backup_path, &sidecar.sha256)?;
-    journal.record("prepare", 0, container.len(), "ok")?;
-
-    commit_container(backend, &descriptor, session, &mut journal, &commit)?;
-    tracing::info!("committed Write finished and verified");
-
-    report(
-        options.json,
-        stdout,
-        &WriteOutput::new(
+    if !commit {
+        return Ok(WriteReport::new(
             filewriter::Operation::Write.as_str(),
-            true,
+            false,
             Some(container_path),
             backup_path,
             container.len(),
             &sidecar.sha256,
             write_plan,
-            options.no_reboot,
-            Some(journal.path()),
+            no_reboot,
+            None,
+        ));
+    }
+
+    let commit_request = filewriter::Commit {
+        operation: filewriter::Operation::Write,
+        container: &container,
+        backup: backup_path,
+        no_reboot,
+    };
+    progress(crate::Progress::Step("prepare"));
+    let mut journal = Journal::create(state_dir, clock, "write", backup_path, &sidecar.sha256)?;
+    journal.record("prepare", 0, container.len(), "ok")?;
+
+    tracing::info!("committed Write starting");
+    progress(crate::Progress::Step("commit"));
+    commit_container(
+        backend,
+        &descriptor,
+        session,
+        &mut journal,
+        &commit_request,
+        progress,
+    )?;
+    tracing::info!("committed Write finished and verified");
+
+    Ok(WriteReport::new(
+        filewriter::Operation::Write.as_str(),
+        true,
+        Some(container_path),
+        backup_path,
+        container.len(),
+        &sidecar.sha256,
+        write_plan,
+        no_reboot,
+        Some(journal.path()),
+    ))
+}
+
+#[cfg(feature = "cli")]
+pub fn run(
+    backend: &mut dyn RemoteBackend,
+    clock: &dyn Clock,
+    state_dir: &Path,
+    container_path: &Path,
+    backup_path: &Path,
+    options: Options,
+    stdout: &mut dyn Write,
+) -> Result<(), Error> {
+    let outcome = perform(
+        backend,
+        clock,
+        state_dir,
+        container_path,
+        backup_path,
+        options.commit,
+        options.no_reboot,
+        &mut crate::progress::ignore,
+    )?;
+    let plan = WritePlan {
+        bytes: outcome.bytes,
+        chunks: outcome.chunks,
+        data_packets: outcome.data_packets,
+    };
+    report(
+        options.json,
+        stdout,
+        &WriteOutput::new(
+            outcome.operation,
+            outcome.commit,
+            outcome.container.as_deref(),
+            &outcome.backup,
+            outcome.size,
+            &outcome.backup_sha256,
+            plan,
+            !outcome.reboot,
+            outcome.journal.as_deref(),
         ),
     )
 }
@@ -122,9 +218,10 @@ pub(crate) fn commit_container(
     session: Box<dyn RemoteSession>,
     journal: &mut Journal<'_>,
     commit: &filewriter::Commit<'_>,
+    progress: &mut dyn FnMut(crate::Progress),
 ) -> Result<WritePlan, Error> {
     let mut session = session;
-    match filewriter::execute(commit, &mut *session, journal) {
+    match filewriter::execute_with_progress(commit, &mut *session, journal, progress) {
         Ok(plan) => Ok(plan),
         Err(error @ Error::Protocol(_)) => {
             drop(session);
@@ -347,6 +444,7 @@ pub(crate) fn check_container(
 }
 
 #[derive(Debug, Serialize)]
+#[cfg(feature = "cli")]
 pub(crate) struct WriteOutput<'a> {
     schema_version: u8,
     operation: &'a str,
@@ -364,6 +462,7 @@ pub(crate) struct WriteOutput<'a> {
     journal: Option<String>,
 }
 
+#[cfg(feature = "cli")]
 impl<'a> WriteOutput<'a> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
@@ -394,6 +493,7 @@ impl<'a> WriteOutput<'a> {
     }
 }
 
+#[cfg(feature = "cli")]
 pub(crate) fn report(
     json: bool,
     stdout: &mut dyn Write,

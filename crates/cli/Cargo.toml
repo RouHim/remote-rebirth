@@ -1,0 +1,15 @@
+[package]
+name = "remote-rebirth-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Offline configuration tool for the Logitech Harmony 300"
+
+[[bin]]
+name = "remote-rebirth"
+path = "src/main.rs"
+
+[dependencies]
+remote-rebirth-core = { path = "../core", default-features = false, features = ["cli"] }
+tracing.workspace = true
+tracing-subscriber = { version = "0.3.23", features = ["fmt"] }
