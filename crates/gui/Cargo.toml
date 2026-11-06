@@ -1,0 +1,20 @@
+[package]
+name = "remote-rebirth-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Desktop configuration tool for the Logitech Harmony 300"
+
+[[bin]]
+name = "remote-rebirth-gui"
+path = "src/main.rs"
+
+[dev-dependencies]
+tempfile = "3.27.0"
+iced_test = "0.14.0"
+
+[dependencies]
+remote-rebirth-core = { path = "../core", default-features = false }
+iced = { version = "0.14", features = ["sipper"] }
+serde.workspace = true
+serde_json.workspace = true

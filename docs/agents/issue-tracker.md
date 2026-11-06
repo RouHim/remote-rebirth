@@ -13,6 +13,7 @@ Issues and specs for this repo live as markdown files in `.scratch/`.
 ## Current feature
 
 - Remote Rebirth: `.scratch/remote-rebirth/spec.md` (no tickets yet)
+- Remote Rebirth GUI: `.scratch/remote-rebirth-gui/spec.md` (no tickets yet)
 
 ## When a skill says "publish to the issue tracker"
 

@@ -8,12 +8,12 @@ fn main() {
         .init();
 
     let args: Vec<OsString> = std::env::args_os().collect();
-    let mut backend = remote_rebirth::HidBackend::new();
-    let clock = remote_rebirth::SystemClock;
-    let state_dir = remote_rebirth::state_dir();
+    let mut backend = remote_rebirth_core::HidBackend::new();
+    let clock = remote_rebirth_core::SystemClock;
+    let state_dir = remote_rebirth_core::state_dir();
     let mut stdout = io::stdout().lock();
     let mut stderr = io::stderr().lock();
-    let mut runtime = remote_rebirth::Runtime {
+    let mut runtime = remote_rebirth_core::Runtime {
         backend: &mut backend,
         clock: &clock,
         stdout: &mut stdout,
@@ -21,7 +21,7 @@ fn main() {
         state_dir,
     };
 
-    let exit = remote_rebirth::run(&args, &mut runtime);
+    let exit = remote_rebirth_core::run(&args, &mut runtime);
     let _ = stdout.flush();
     let _ = stderr.flush();
     std::process::exit(exit.0 as i32);

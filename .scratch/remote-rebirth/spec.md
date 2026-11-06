@@ -2,6 +2,7 @@
 
 Status: ready-for-agent
 Source: `.spec/remote-rebirth.md`
+Related: `.scratch/remote-rebirth-gui/spec.md` — desktop GUI, Model v2 routing, IR Library
 Domain: `GLOSSARY.md`, `docs/adr/0001`–`0009`
 
 ## Problem Statement
@@ -12,7 +13,7 @@ A Logitech Harmony 300 owner cannot reconfigure the Remote once Logitech's confi
 
 A native Rust CLI for Linux x86_64 that operates entirely offline. It identifies the Remote over USB, reads its identity and Configuration, writes a Backup with a metadata sidecar, Composes a new Container from a declarative JSON model plus locally imported IR Sources, and Writes or Restores the Container with a checksum check, a Read-Back, and a Journal.
 
-v1 targets Architecture 16, the Harmony 300 Model Profile, skins 78 and 79, firmware 1.4, four Devices, four IR groups, one Watch TV Activity, and four or five Favourites. The CLI is the v1 surface; a GUI is out of scope, and the core library is structured so a later GUI can consume it.
+v1 targets Architecture 16, the Harmony 300 Model Profile, skins 78 and 79, firmware 1.4, four Devices, four IR groups, one Watch TV Activity, and four or five Favourites. The CLI is the v1 surface. The desktop GUI is specified separately in `.scratch/remote-rebirth-gui/spec.md`; it consumes the same core library, and the CLI and core remain network-free.
 
 ## User Stories
 
@@ -101,11 +102,13 @@ v1 targets Architecture 16, the Harmony 300 Model Profile, skins 78 and 79, firm
 63. As a maintainer, I want all behavior tested through one seam with a fake Remote, so that the suite runs without hardware.
 64. As an owner, I want a physical acceptance checklist for the write path, so that the unverified reference sequence is proven on a real Harmony 300.
 
+GUI user stories are in `.scratch/remote-rebirth-gui/spec.md`.
+
 ## Implementation Decisions
 
 ### Package and test seam
 
-- One Cargo package with a library target and a binary target. Flat module tree: every source file is declared once at the crate root; no nested module directories and no `mod` blocks inside files. No workspace.
+- The CLI-only v1 was one Cargo package with a library target and a binary target. The GUI feature converts the repository to a workspace: `remote-rebirth-core` (typed operations, validation, codecs, transport traits, progress events, no stdout/stderr of its own, no network client), `remote-rebirth-cli` (the existing `remote-rebirth` binary: a runtime builder that calls `run`), and `remote-rebirth-gui` (Iced application, IR Library downloader and GUI-only project state). The flat module tree — including the clap-based CLI adapter behind the default `cli` feature — remains in the core; the CLI package keeps only the runtime builder. See `.scratch/remote-rebirth-gui/spec.md`.
 - The binary is a thin adapter: collect arguments, build the real runtime, call `run(args, runtime)`, and exit with its code.
 - `run(args, runtime) -> Exit` is the single test seam. It owns argument parsing, command dispatch, validation, codecs, protocol sequencing, artifacts, JSON output, and exit-code mapping.
 - `Runtime` supplies:
@@ -152,7 +155,7 @@ JSON goes to stdout; progress and diagnostics go to stderr. Every documented cod
 ### Artifacts
 
 - Backup: the Container file plus `<backup-path>.json`, with `schema_version`, `file`, `model`, `skin`, `architecture`, `firmware_version`, `guid`, `serial`, `size`, `sha256`, `timestamp`, and `validation` (`ok`, `checksum_mismatch`, or `unreadable`).
-- Compose: the Container plus `<container-path>.model.json`, the resolved model. Each Command records its IR Source format, resolved path, selector, source SHA-256, chosen protocol, `sends`, and a compact IR Record summary.
+- Compose: the Container plus `<container-path>.model.json`, the resolved model. Each composed Command records its IR Source format, resolved path, selector, source SHA-256, chosen protocol, `sends`, and a compact IR Record summary. Unreferenced Commands are omitted; the Model remains the full command set.
 - Schemas: hand-written JSON Schema files for the model, inspect output, Backup sidecar, and resolved model, embedded with `include_str!` and exposed by the `--print-schema`/`--print-resolved-schema` flags.
 - Journal: append-only JSONL at `$XDG_STATE_HOME/remote-rebirth/journal.jsonl`, falling back to `$HOME/.local/state/remote-rebirth/journal.jsonl`. Each record carries operation id, UTC timestamp, command, step, offset, byte count, reply status, Backup path, and Backup digest. Only committed `write` and `restore` operations journal.
 
@@ -237,13 +240,13 @@ JSON goes to stdout; progress and diagnostics go to stderr. Every documented cod
 
 - `profile` and `skin` are required; Compose does not need a Remote.
 - `device_key` is the key place `1..4`, not the printed label; the Model Profile supplies labels. Duplicates are rejected.
-- `keys` maps canonical key names to Commands of the same Device. Unbound keys send nothing; cross-device punch-through is out of scope.
+- `keys` maps canonical key names to Commands of the same Device. Unbound keys send nothing. Model v2 adds optional `routing.volume` and `routing.channel`; the target Device's own bindings for the required keys are copied into every other Device's map. A non-target Device binding a routed key is rejected, and a target missing a required key is rejected.
 - Canonical key names: `power`, `volume_up`, `volume_down`, `volume_mute`, `channel_up`, `channel_down`, `number_0` through `number_9`, `direction_up`, `direction_down`, `direction_left`, `direction_right`, `select`, `menu`, `exit`, `info`, `guide`, `play`, `pause`, `stop`, `rewind`, `fast_forward`, `skip_back`, `skip_forward`, `record`, `red`, `green`, `yellow`, `blue`, `list`, `live`, `prev_channel`, `clear`, `enter`, `input`, `teletext`. Device keys, the Watch TV key, and Favourite keys are profile-owned and are not bindable through `keys`.
-- Every declared Command must be referenced by `keys` or `activity`; unreferenced Commands are rejected so the Container stores only codes that are sent.
+- Every declared Command need not be referenced. A Model may hold a library Device's full command set; Compose validates and imports only Commands referenced by `keys`, `activity` or routing, and omits unreferenced Commands from the Container and resolved-model sidecar. An unreferenced Command with an unsupported protocol does not block Compose; binding it fails with the normal error.
 - `activity` is required and exactly one. `channel_device` names a declared Device. Steps run in order; `delay_ms` defaults to 500.
 - `favourites` are optional. `key` is positional `1..capacity`; `channel` is 1–5 decimal digits, no leading zero, within the number sender's packed-decimal range.
 - IR paths are relative to the model file; absolute paths are allowed. Inline Pronto hex is allowed.
-- A Device may have an empty `keys` map only when its Commands are used by the activity.
+- A Device may have an empty `keys` map. Its Commands may be unreferenced; Compose omits them from the Container and the resolved-model sidecar.
 
 ### Model Profile
 
@@ -273,14 +276,14 @@ JSON goes to stdout; progress and diagnostics go to stderr. Every documented cod
 
 ## Out of Scope
 
-- A GUI.
+- A GUI: specified separately in `.scratch/remote-rebirth-gui/spec.md`.
 - Firmware reads or writes; only Configuration is written.
-- Any network client, telemetry, or update check.
-- Logitech's device catalogue or IR database.
+- Network clients in the CLI or core; the GUI's explicit IR Library download is specified separately.
+- Logitech's device catalogue or IR database; the GUI's open IR Library is separate.
 - Enabling the Harmony 350 Model Profile; it is recognised and refused.
 - Long press.
 - More than one Watch TV Activity.
-- Cross-device key bindings or volume punch-through.
+- Routing beyond volume and channel up/down; digit, Enter, previous-channel and Input routing are out of scope.
 - Favourite channels with leading zeros.
 - RC6, RCMM, NEC42, RCA, Pronto `5001`/`6000`/`7000`/`8000`/`900A–900E`.
 - Windows, macOS, or non-x86_64 Linux.
@@ -299,3 +302,4 @@ JSON goes to stdout; progress and diagnostics go to stderr. Every documented cod
 - The Harmony 300 and 350 share product ID `0xC124`; `bcdDevice` and `/sys/sysinfo` resolve the model and Skin. The Harmony 300's `bcdDevice` is `0x1078` even on Skin 79 units.
 - The hardware gate was exercised on 2026-11-05 on a Harmony 300 (`046D:C124`, `bcdDevice 0x1078`, skin 79): `detect`, `backup`, `inspect`, `compose`, committed `write` with Read-Back, and `restore` pass. The IR bench remains manual because the verification model used synthetic Pronto pulses.
 - Local tracker: this spec is `.scratch/remote-rebirth/spec.md`. No tickets have been created yet.
+- GUI tracker: `.scratch/remote-rebirth-gui/spec.md`. The GUI introduces Model v2 routing, the workspace split, and the optional IR Library download; no GUI tickets have been created yet.

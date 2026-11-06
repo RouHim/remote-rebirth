@@ -60,6 +60,29 @@ Remote before treating the write path as proven.
 - [ ] A disconnect mid-write journals the last acknowledged step and reports the recovery procedure.
 - [ ] The Journal at `$XDG_STATE_HOME/remote-rebirth/journal.jsonl` contains the expected records.
 
+## GUI first slice
+
+Run `target/release/remote-rebirth-gui` on the machine with the Remote attached.
+
+- [ ] Enable Settings → Show technical details before running the checks that name Skin, digests, or
+      packet counts; those details are hidden without it. The firmware version is shown on the
+      Remote page either way; only the footer's Skin and firmware line is gated.
+- [ ] The footer reports `Harmony 300`, Skin 79, firmware 1.4.0 after Detect.
+- [ ] Save backup writes a managed Backup and its sidecar under the app data directory.
+- [ ] Adding a Device with a local Pronto/LIRC/Flipper Command validates the Model.
+- [ ] Selecting a Key in the diagram and assigning a Command updates both the diagram and the table.
+- [ ] Setting Volume buttons to the TV and Channel buttons to the cable Device in the Volume and
+      channel buttons card composes a Container whose non-target Key Maps contain the routed scans.
+- [ ] Review update captures a fresh Backup, composes, Dry Runs, and shows bytes, chunks, data
+      packets and the Backup digest.
+- [ ] Update remote completes, the Read-Back equals the Container, and the Remote reboots.
+- [ ] Review restore and Restore remote return the Remote to a verified Backup byte for byte.
+
+The bench receiver checks in the committed Write section are also the routing acceptance gate: with
+Volume buttons set to the TV and Channel buttons set to the cable Device, the non-TV Devices'
+volume keys send the TV's codes, the non-cable Devices' channel keys send the cable Device's codes,
+and the TV and cable Device still send their own codes for those keys.
+
 ## Record
 
 Record the Remote's identity, firmware, skin, the Backup digest, the composed Container digest, and

@@ -5,6 +5,7 @@ use serde::Serialize;
 use crate::container;
 use crate::error::Error;
 use crate::journal::Journal;
+use crate::progress::Progress;
 use crate::protocol::DATA_PACKET_PAYLOAD;
 use crate::transport::{RemoteSession, read_file};
 
@@ -62,22 +63,34 @@ pub struct Commit<'a> {
 /// writes, checksum check, flush only on `m`, close, Read-Back, reboot. The
 /// caller records the prepare step before this function runs, because opening
 /// for writing erases the configuration region.
-pub fn execute(
+/// Commit a Container, reporting each protocol stage to `progress`.
+pub fn execute_with_progress(
     commit: &Commit<'_>,
     session: &mut dyn RemoteSession,
     journal: &mut Journal<'_>,
+    progress: &mut dyn FnMut(Progress),
 ) -> Result<WritePlan, Error> {
     let covered_len = commit.container.len().saturating_sub(6);
     let expected = container::stored_checksum(commit.container)
         .ok_or_else(|| Error::Validation("Container is shorter than its trailer".into()))?;
 
+    progress(Progress::Step("reset"));
     session.reset_filesystem()?;
     journal.record("reset", 0, 0, "ok")?;
 
+    progress(Progress::Step("open"));
     let handle = session.open_write(CONFIG_PATH, commit.container.len() as u32)?;
     journal.record("open_write", 0, commit.container.len(), "ok")?;
 
-    let result = commit_chunks(commit, session, journal, handle, expected, covered_len);
+    let result = commit_chunks(
+        commit,
+        session,
+        journal,
+        handle,
+        expected,
+        covered_len,
+        progress,
+    );
     if result.is_err() {
         // A refused check or a protocol failure leaves the session poisoned;
         // closing the handle is best effort and the caller reopens a fresh one.
@@ -93,17 +106,24 @@ fn commit_chunks(
     handle: u8,
     expected: u16,
     covered_len: usize,
+    progress: &mut dyn FnMut(Progress),
 ) -> Result<WritePlan, Error> {
     let write_plan = plan(commit.container.len());
     let chunks: Vec<&[u8]> = commit.container.chunks(CHUNK_BYTES).collect();
+    let total = commit.container.len();
     let mut offset = 0usize;
     for (index, chunk) in chunks.iter().enumerate() {
         let last = index + 1 == chunks.len();
         session.write_chunk(handle, chunk, last)?;
         journal.record("write", offset, chunk.len(), "done")?;
         offset += chunk.len();
+        progress(Progress::Written {
+            bytes: offset,
+            total,
+        });
     }
 
+    progress(Progress::Step("check"));
     let accepted = session.check(handle, expected, covered_len as u32)?;
     journal.record("check", 0, covered_len, if accepted { "m" } else { "u" })?;
     if !accepted {
@@ -116,11 +136,14 @@ fn commit_chunks(
         )));
     }
 
+    progress(Progress::Step("flush"));
     session.flush(handle)?;
     journal.record("flush", 0, 0, "ok")?;
+    progress(Progress::Step("close"));
     session.close(handle)?;
     journal.record("close", 0, 0, "ok")?;
 
+    progress(Progress::Step("read-back"));
     let read = read_file(session, CONFIG_PATH)?;
     let read = container::reconstruct_trailer(&read);
     if read != commit.container {
@@ -137,10 +160,12 @@ fn commit_chunks(
     if commit.no_reboot {
         journal.record("reboot", 0, 0, "skipped")?;
     } else {
+        progress(Progress::Step("reboot"));
         session.reboot()?;
         journal.record("reboot", 0, 0, "ok")?;
     }
 
+    progress(Progress::Step("done"));
     Ok(write_plan)
 }
 

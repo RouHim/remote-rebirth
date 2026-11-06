@@ -13,7 +13,8 @@ not depend on a Logitech account or service.
 cargo build --release
 ```
 
-The binary is `target/release/remote-rebirth`. The transport uses hidapi's libusb backend, so the build
+The CLI binary is `target/release/remote-rebirth`; the GUI binary is
+`target/release/remote-rebirth-gui`. The transport uses hidapi's libusb backend, so the build
 needs libusb's development files (`libusb` and `pkg-config` on Arch; `libusb-1.0-0-dev` and
 `pkg-config` on Debian/Ubuntu).
 
@@ -35,6 +36,18 @@ Reconnect the Remote after installing the rule; for an already-connected unit, a
 
 After a committed `write` or `restore` reboots the Remote, wait for USB re-enumeration before the next
 command; the device node changes.
+
+## Desktop GUI
+
+`cargo run -p remote-rebirth-gui` starts the first-slice desktop application. It links the same core
+as the CLI, never shells out, and contains no network client in this slice.
+
+The GUI manages an active Model at `$XDG_DATA_HOME/remote-rebirth/model.json` (falling back to
+`$HOME/.local/share/remote-rebirth/model.json`), keeps automatic and manual Backups under
+`backups/`, and drives the same verified Write and Restore path as the CLI. The first slice covers
+Detect, Backup, Device and Command editing, the Key Map with volume/channel Routing, Prepare/Commit
+Write, and Prepare/Commit Restore. The IR Library browser, drag-and-drop assignment, and the full
+Favourites and Activity polish are the next slice.
 
 ## Commands
 

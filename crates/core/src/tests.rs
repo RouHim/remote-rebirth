@@ -1149,7 +1149,7 @@ fn model_rejects_duplicate_device_keys() {
 }
 
 #[test]
-fn model_rejects_unreferenced_command() {
+fn model_accepts_unreferenced_command() {
     let mut model = valid_model();
     model.devices[0].commands.insert(
         "unused".into(),
@@ -1158,8 +1158,101 @@ fn model_rejects_unreferenced_command() {
         }))
         .expect("command"),
     );
-    let error = crate::model::validate(&model, &crate::profile::HARMONY_300).expect_err("unused");
-    assert!(error.to_string().contains("not referenced"));
+    crate::model::validate(&model, &crate::profile::HARMONY_300).expect("unused allowed");
+    assert_eq!(
+        crate::model::unused_commands(&model),
+        vec![("TV".to_string(), "unused".to_string())]
+    );
+}
+
+fn model_with_volume_bindings() -> crate::model::Model {
+    let mut model = valid_model();
+    for key in crate::model::Routing::VOLUME_KEYS {
+        model.devices[0].commands.insert(
+            (*key).into(),
+            serde_json::from_value(serde_json::json!({
+                "source": { "format": "pronto", "hex": "0000 006D 0002 0000 0020 0020 0020 0020" }
+            }))
+            .expect("command"),
+        );
+        model.devices[0].keys.insert((*key).into(), (*key).into());
+    }
+    model
+}
+
+#[test]
+fn model_accepts_v2_routing() {
+    let mut model = model_with_volume_bindings();
+    model.schema_version = 2;
+    model.routing = Some(crate::model::Routing {
+        volume: Some("TV".into()),
+        channel: None,
+    });
+    crate::model::validate(&model, &crate::profile::HARMONY_300).expect("routing");
+}
+
+#[test]
+fn model_rejects_routing_in_v1() {
+    let mut model = model_with_volume_bindings();
+    model.routing = Some(crate::model::Routing {
+        volume: Some("TV".into()),
+        channel: None,
+    });
+    let error =
+        crate::model::validate(&model, &crate::profile::HARMONY_300).expect_err("v1 routing");
+    assert!(error.to_string().contains("schema_version 1"));
+}
+
+#[test]
+fn model_rejects_missing_routing_target() {
+    let mut model = valid_model();
+    model.schema_version = 2;
+    model.routing = Some(crate::model::Routing {
+        volume: Some("Missing".into()),
+        channel: None,
+    });
+    let error =
+        crate::model::validate(&model, &crate::profile::HARMONY_300).expect_err("missing target");
+    assert!(error.to_string().contains("missing Device 'Missing'"));
+}
+
+#[test]
+fn model_rejects_target_missing_required_binding() {
+    let mut model = valid_model();
+    model.schema_version = 2;
+    model.routing = Some(crate::model::Routing {
+        volume: Some("TV".into()),
+        channel: None,
+    });
+    let error =
+        crate::model::validate(&model, &crate::profile::HARMONY_300).expect_err("missing binding");
+    assert!(error.to_string().contains("does not bind key 'volume_up'"));
+}
+
+#[test]
+fn model_rejects_non_target_routed_key() {
+    let mut model = model_with_volume_bindings();
+    model.schema_version = 2;
+    model.routing = Some(crate::model::Routing {
+        volume: Some("TV".into()),
+        channel: None,
+    });
+    let mut cable = model.devices[0].clone();
+    cable.name = "Cable".into();
+    cable.device_key = 2;
+    cable.commands.clear();
+    cable.keys.clear();
+    cable.commands.insert(
+        "power".into(),
+        serde_json::from_value(serde_json::json!({
+            "source": { "format": "pronto", "hex": "0000 006D 0002 0000 0020 0020 0020 0020" }
+        }))
+        .expect("command"),
+    );
+    cable.keys.insert("volume_up".into(), "power".into());
+    model.devices.push(cable);
+    let error = crate::model::validate(&model, &crate::profile::HARMONY_300).expect_err("conflict");
+    assert!(error.to_string().contains("routing volume assigns to 'TV'"));
 }
 
 #[test]
@@ -1235,6 +1328,25 @@ fn model_json_validates_against_published_schema() {
     validator
         .validate(&serialized)
         .expect("serialized model validates");
+}
+
+#[test]
+fn model_v2_schema_accepts_routing_and_rejects_v1_routing() {
+    let schema: Value =
+        serde_json::from_str(include_str!("../schema/model-v2.json")).expect("schema");
+    let validator = jsonschema::validator_for(&schema).expect("compile schema");
+
+    let mut v2 = valid_model_json();
+    v2["schema_version"] = json!(2);
+    v2["routing"] = json!({ "volume": "TV" });
+    validator.validate(&v2).expect("v2 routing validates");
+
+    let mut v1 = valid_model_json();
+    v1["routing"] = json!({ "volume": "TV" });
+    assert!(
+        validator.validate(&v1).is_err(),
+        "v1 must not declare routing"
+    );
 }
 
 #[test]
