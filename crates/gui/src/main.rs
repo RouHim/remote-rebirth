@@ -69,6 +69,7 @@ enum Page {
     KeyMap,
     Activities,
     Favourites,
+    Library,
     Settings,
 }
 
@@ -138,6 +139,11 @@ enum Message {
     AddFavourite,
     FavouriteChannel(usize, String),
     DeleteFavourite(usize),
+    LibraryPath(String),
+    ScanLibrary,
+    LibrarySearch(String),
+    SelectLibraryDevice(usize),
+    AddLibraryDevice,
     RestorePath(String),
     Save,
     Reload,
@@ -148,6 +154,14 @@ enum Message {
     RefreshBackups,
     DeleteBackup(PathBuf),
     DismissError,
+}
+
+#[derive(Debug, Clone)]
+struct LibraryDevice {
+    brand: String,
+    model: String,
+    path: PathBuf,
+    commands: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -228,6 +242,12 @@ struct App {
     activity_input: String,
     activity_delay: String,
     new_favourite_channel: String,
+    library_dir: String,
+    library: Vec<LibraryDevice>,
+    library_search: String,
+    library_selected: Option<usize>,
+    library_status: String,
+    library_error: Option<String>,
     backup_path: Option<PathBuf>,
     backups: Vec<PathBuf>,
     container_size: Option<u64>,
@@ -306,6 +326,14 @@ impl App {
             }
         };
         let backups = list_backups(&backups_dir);
+        let library_dir = data_dir.join("ir-library");
+        let library = scan_library(&library_dir).unwrap_or_default();
+        let library_status = if library.is_empty() {
+            "No local IR Library yet. Choose a folder and Scan.".to_string()
+        } else {
+            format!("{} devices indexed.", library.len())
+        };
+        let library_selected = (!library.is_empty()).then_some(0);
         let selected_device = gui_state
             .selected_device
             .min(model.devices.len().saturating_sub(1));
@@ -320,7 +348,8 @@ impl App {
             2 => Page::KeyMap,
             3 => Page::Activities,
             4 => Page::Favourites,
-            5 => Page::Settings,
+            5 => Page::Library,
+            6 => Page::Settings,
             _ => Page::Remote,
         };
         let page = if model.devices.is_empty() {
@@ -350,6 +379,12 @@ impl App {
                 activity_input: String::new(),
                 activity_delay: "500".into(),
                 new_favourite_channel: String::new(),
+                library_dir: library_dir.display().to_string(),
+                library,
+                library_search: String::new(),
+                library_selected,
+                library_status,
+                library_error: None,
                 backup_path: None,
                 backups,
                 container_size: None,
@@ -994,6 +1029,86 @@ impl App {
                 }
                 Task::none()
             }
+            Message::LibraryPath(path) => {
+                self.library_dir = path;
+                Task::none()
+            }
+            Message::ScanLibrary => {
+                match scan_library(Path::new(&self.library_dir)) {
+                    Ok(devices) => {
+                        self.library_status = if devices.is_empty() {
+                            "No .ir files with named commands found.".to_string()
+                        } else {
+                            format!("{} devices indexed.", devices.len())
+                        };
+                        self.library_selected = (!devices.is_empty()).then_some(0);
+                        self.library = devices;
+                        self.library_error = None;
+                    }
+                    Err(error) => {
+                        self.library_error = Some(error);
+                    }
+                }
+                Task::none()
+            }
+            Message::LibrarySearch(search) => {
+                self.library_search = search;
+                Task::none()
+            }
+            Message::SelectLibraryDevice(index) => {
+                if index < self.library.len() {
+                    self.library_selected = Some(index);
+                }
+                Task::none()
+            }
+            Message::AddLibraryDevice => {
+                let Some(source) = self
+                    .library_selected
+                    .and_then(|index| self.library.get(index))
+                    .cloned()
+                else {
+                    self.library_error = Some("Choose a library device first.".into());
+                    return Task::none();
+                };
+                if self.model.devices.is_empty() {
+                    self.library_error = Some("Choose a device on My Devices first.".into());
+                    return Task::none();
+                }
+                let device_index = self
+                    .selected_device
+                    .min(self.model.devices.len().saturating_sub(1));
+                let target_name = self.model.devices[device_index].name.clone();
+                let mut added = 0;
+                let mut skipped = 0;
+                for name in &source.commands {
+                    let target = &mut self.model.devices[device_index];
+                    if target.commands.contains_key(name) {
+                        skipped += 1;
+                        continue;
+                    }
+                    target.commands.insert(
+                        name.clone(),
+                        Command {
+                            source: IrSource {
+                                format: "flipper".into(),
+                                file: Some(source.path.clone()),
+                                hex: None,
+                                remote: None,
+                                button: Some(name.clone()),
+                                command: None,
+                            },
+                            sends: None,
+                        },
+                    );
+                    added += 1;
+                }
+                self.persist();
+                self.library_status = format!(
+                    "Added {added} command(s) to {target_name}; {skipped} already present."
+                );
+                self.library_error = None;
+                Task::none()
+            }
             Message::RestorePath(path) => {
                 if self.restore_path != path && self.prepared_kind == Some(PreparedKind::Restore) {
                     self.prepared_kind = None;
@@ -1168,7 +1283,8 @@ impl App {
                 Key::Character("3") => self.set_page(Page::KeyMap),
                 Key::Character("4") => self.set_page(Page::Activities),
                 Key::Character("5") => self.set_page(Page::Favourites),
-                Key::Character("6") => self.set_page(Page::Settings),
+                Key::Character("6") => self.set_page(Page::Library),
+                Key::Character("7") => self.set_page(Page::Settings),
                 Key::Character("b") | Key::Character("B") => {
                     return self.update(Message::Backup);
                 }
@@ -1207,12 +1323,13 @@ impl App {
     }
 
     fn cycle_page(&mut self, delta: isize) {
-        const PAGES: [Page; 6] = [
+        const PAGES: [Page; 7] = [
             Page::Remote,
             Page::Devices,
             Page::KeyMap,
             Page::Activities,
             Page::Favourites,
+            Page::Library,
             Page::Settings,
         ];
         let index = PAGES
@@ -1444,7 +1561,8 @@ impl App {
                 Page::KeyMap => 2,
                 Page::Activities => 3,
                 Page::Favourites => 4,
-                Page::Settings => 5,
+                Page::Library => 5,
+                Page::Settings => 6,
             },
             selected_device: self.selected_device,
             selected_key: self.selected_key.clone(),
@@ -1894,9 +2012,118 @@ fn list_backups(directory: &Path) -> Vec<PathBuf> {
     backups
 }
 
+fn scan_library(root: &Path) -> Result<Vec<LibraryDevice>, String> {
+    if !root.is_dir() {
+        return Err(format!("{} is not a folder.", root.display()));
+    }
+    let mut directories = vec![root.to_path_buf()];
+    let mut devices = Vec::new();
+    while let Some(directory) = directories.pop() {
+        let entries = std::fs::read_dir(&directory)
+            .map_err(|error| format!("{}: {error}", directory.display()))?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                directories.push(path);
+                continue;
+            }
+            if path.extension().and_then(|extension| extension.to_str()) != Some("ir") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let mut commands: Vec<String> = text
+                .lines()
+                .filter_map(|line| line.strip_prefix("name:"))
+                .map(|name| name.trim().to_string())
+                .filter(|name| !name.is_empty())
+                .collect();
+            commands.sort();
+            commands.dedup();
+            if commands.is_empty() {
+                continue;
+            }
+            let relative = path.strip_prefix(root).ok();
+            let brand = relative
+                .and_then(|relative| relative.parent())
+                .and_then(|parent| parent.components().next())
+                .map(|component| component.as_os_str().to_string_lossy().into_owned())
+                .unwrap_or_else(|| "Local".into());
+            let model = path
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string());
+            devices.push(LibraryDevice {
+                brand,
+                model,
+                path,
+                commands,
+            });
+            if devices.len() >= 20_000 {
+                break;
+            }
+        }
+    }
+    devices.sort_by(|left, right| {
+        left.brand
+            .cmp(&right.brand)
+            .then(left.model.cmp(&right.model))
+    });
+    Ok(devices)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn library_scan_indexes_brand_model_and_commands() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let brand = directory.path().join("Samsung");
+        std::fs::create_dir_all(&brand).expect("brand dir");
+        std::fs::write(
+            brand.join("TV.ir"),
+            "Filetype: IR signals file\nVersion: 1\n#\nname: Power\ntype: parsed\n#\nname: Volume Up\ntype: raw\n",
+        )
+        .expect("write library file");
+        let devices = scan_library(directory.path()).expect("scan");
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].brand, "Samsung");
+        assert_eq!(devices[0].model, "TV");
+        assert_eq!(devices[0].commands, ["Power", "Volume Up"]);
+    }
+
+    #[test]
+    fn library_import_adds_all_commands_to_selected_device() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let brand = directory.path().join("Samsung");
+        std::fs::create_dir_all(&brand).expect("brand dir");
+        std::fs::write(
+            brand.join("TV.ir"),
+            "Filetype: IR signals file\nVersion: 1\nname: Power\ntype: parsed\nname: Volume Up\ntype: raw\n",
+        )
+        .expect("write library file");
+        let (mut app, _) = App::at(directory.path().join("data"));
+        app.library = scan_library(directory.path()).expect("scan");
+        app.library_selected = Some(0);
+        app.model.devices.push(Device {
+            name: "Living Room TV".into(),
+            device_key: 1,
+            commands: BTreeMap::new(),
+            keys: BTreeMap::new(),
+        });
+        app.selected_device = 0;
+        let _ = app.update(Message::AddLibraryDevice);
+        let device = &app.model.devices[0];
+        assert!(device.commands.contains_key("Power"));
+        assert!(device.commands.contains_key("Volume Up"));
+        assert_eq!(device.commands["Power"].source.format, "flipper");
+        assert_eq!(
+            device.commands["Power"].source.button.as_deref(),
+            Some("Power")
+        );
+    }
 
     #[test]
     fn blank_app_builds_a_valid_one_device_project() {
