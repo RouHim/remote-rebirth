@@ -105,10 +105,12 @@ impl FakeBackend {
         }
     }
 
+    #[cfg(feature = "cli")]
     pub fn store(&self, index: usize) -> Rc<RefCell<DeviceStore>> {
         Rc::clone(&self.stores[index])
     }
 
+    #[cfg(feature = "cli")]
     pub fn calls(&self) -> Rc<RefCell<Vec<Call>>> {
         Rc::clone(&self.calls)
     }

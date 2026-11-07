@@ -7,6 +7,7 @@ mod compose;
 mod compose_build;
 mod container;
 mod detect;
+#[cfg(test)]
 mod empty;
 mod error;
 #[cfg(test)]
@@ -17,7 +18,7 @@ mod hid;
 #[cfg(feature = "cli")]
 mod inspect;
 mod inspect_container;
-pub mod ir;
+mod ir;
 mod ir_encode;
 mod ir_flipper;
 mod ir_lirc;
@@ -26,6 +27,7 @@ mod ir_record;
 mod ir_types;
 mod journal;
 pub mod model;
+mod output;
 mod paths;
 pub mod profile;
 mod progress;
@@ -52,13 +54,16 @@ mod inspect_tests;
 #[cfg(test)]
 mod ir_tests;
 #[cfg(test)]
+mod journal_tests;
+#[cfg(test)]
 mod tables_tests;
-#[cfg(all(test, feature = "cli"))]
+#[cfg(test)]
 mod tests;
 
 #[cfg(feature = "cli")]
 pub use cli::run;
 pub use clock::{Clock, SystemClock};
+#[cfg(test)]
 pub use empty::emit_empty;
 pub use error::{Error, Exit};
 pub use hid::HidBackend;
@@ -70,3 +75,9 @@ pub use transport::{OpenRead, RemoteBackend, RemoteDescriptor, RemoteSelector, R
 
 /// The core operations the GUI calls. Added by the GUI feature; the CLI keeps its own adapter.
 pub mod gui_api;
+
+#[cfg(not(target_os = "linux"))]
+compile_error!(
+    "remote-rebirth-core supports Linux only: the transport is hidapi's libusb backend and \
+     Detect reads /sys/bus/usb/devices directly"
+);

@@ -1,22 +1,12 @@
-use std::collections::BTreeMap;
-
-use serde::Serialize;
-
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default)]
 pub struct SysInfo {
     pub architecture: Option<u8>,
     pub skin: Option<u8>,
     pub firmware_version: Option<String>,
-    pub firmware_type: Option<String>,
     pub hardware_version: Option<String>,
     pub guid: Option<String>,
     pub serial: Option<String>,
-    pub link_type: Option<String>,
     pub link_packet_length: Option<u16>,
-    pub usb_vendor_id: Option<u16>,
-    pub usb_product_id: Option<u16>,
-    #[serde(skip)]
-    pub raw: BTreeMap<String, String>,
 }
 
 pub fn parse(bytes: &[u8]) -> SysInfo {
@@ -33,23 +23,18 @@ pub fn parse(bytes: &[u8]) -> SysInfo {
         if key.is_empty() || value.is_empty() {
             continue;
         }
-        info.raw.insert(key.clone(), value.clone());
         match key.as_str() {
             "arch" | "architecture" => info.architecture = parse_u8(&value),
             "skin" => info.skin = parse_u8(&value),
             "fw_ver" | "firmware_version" => {
                 info.firmware_version = Some(normalize_version(&value));
             }
-            "fw_type" | "firmware_type" => info.firmware_type = Some(value),
             "hw_ver" | "hardware_version" => {
                 info.hardware_version = Some(normalize_version(&value));
             }
             "guid" => info.guid = Some(value),
             "serial" | "serial_number" | "serialnumber" => info.serial = Some(value),
-            "link_type" => info.link_type = Some(value),
             "link_packet_length" => info.link_packet_length = parse_u16(&value),
-            "usb_vendor_id" => info.usb_vendor_id = parse_u16(&value),
-            "usb_product_id" => info.usb_product_id = parse_u16(&value),
             _ => {}
         }
     }

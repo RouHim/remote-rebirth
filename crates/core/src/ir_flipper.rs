@@ -51,6 +51,23 @@ pub(crate) fn parse_flipper(
     }
 }
 
+/// The commands a Flipper file offers, validated with the same rules an import uses.
+///
+/// A file is listed only when every entry it declares parses; a malformed line is reported rather
+/// than hidden, so the GUI cannot offer a command that Compose would later reject.
+pub(crate) fn command_names(text: &str, context: &Context) -> Result<Vec<String>, IrError> {
+    let entries = parse_flipper_entries(text, context)?;
+    let mut names: Vec<String> = entries
+        .into_iter()
+        .filter(|entry| !entry.name.trim().is_empty())
+        .filter(|entry| !entry.kind.trim().is_empty())
+        .map(|entry| entry.name)
+        .collect();
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
 fn parse_flipper_entries(text: &str, context: &Context) -> Result<Vec<FlipperEntry>, IrError> {
     let mut entries: Vec<FlipperEntry> = Vec::new();
     for raw_line in text.lines() {

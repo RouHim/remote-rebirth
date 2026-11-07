@@ -127,12 +127,12 @@ The GUI is a direct-form editor with no setup wizard. It runs on Linux x86_64 an
 
 - App data: `$XDG_DATA_HOME/remote-rebirth/`, falling back to `$HOME/.local/share/remote-rebirth/`.
 - `model.json`: active Model v2, portable and CLI-compatible.
-- `gui.json`: GUI-only state (window size, selections, library provenance, recents).
+- `gui.json`: the shipped GUI-only state: `page`, `selected_device`, `selected_key`, `reboot`, `advanced`, `library_dir`. There is no `settings.json`; the reboot and technical-details toggles are stored in `gui.json`.
 - `backups/`: managed Backup Containers and sidecars; keep all, manual delete.
-- `ir-library/`: pinned archive, extracted index, version marker.
-- `settings.json`: preferences, including download consent.
+- `ir-library/`: the default folder the Library browser scans; nothing is fetched into it yet.
 - Autosave atomically; Export writes a standalone Model JSON; Import validates before replacing the active Model.
 - Journal remains at `$XDG_STATE_HOME/remote-rebirth/journal.jsonl`, shared with the CLI.
+- Planned with the downloader slice, not implemented: persisted window geometry, library provenance, recents, download consent, and the pinned archive/index/version marker under `ir-library/`.
 
 ### Safety
 
@@ -203,7 +203,7 @@ The first delivery slice is implemented:
 - Iced GUI rebuilt as an owner's manual: Remote, Devices, Key Map (numbered diagram, table, command index and Routing), Activities, Favourites, IR Library (local folder), Settings; Detect on open, managed Backup list with stamped validation states, standalone Compose, Prepare/Commit Write and Restore, and a separate `gui.json` for GUI-only state.
 - Keyboard shortcuts cover chapter navigation (`Ctrl+1…7`), backup/review/detect, device and key traversal, first-match command assignment (`Ctrl+Enter` or Enter in the index), and dismissal. Full focus traversal and a button focus ring remain open.
 - Local IR Library browser: scans a chosen folder of Flipper `.ir` files, searches brand/model/command, and imports a whole command set into the selected Device. It makes no network request; the pinned Flipper-IRDB downloader remains next.
-- Tests: 136 core tests and 9 GUI tests; `cargo clippy --workspace --all-targets` clean; the redesigned GUI captured under `sway-headless` with `grim` at 1240×820 and the 1040×680 minimum in `.impeccable/review/`.
+- Tests: 136 core tests and 9 GUI tests; `cargo clippy --workspace --all-targets` clean; the redesigned GUI captured under `sway-headless` with `grim` at 1240×820 and the 1040×680 minimum in `.scratch/remote-rebirth-gui/screenshots/`.
 - Hardware read path on the Harmony 300: Detect, Backup (24,725 B, validation `ok`), Compose and a Write Dry Run (commit `false`, 1 chunk, 37 data packets) verified on 2026-11-06. No committed write or Read-Back was performed; that remains the release gate.
 
 The next slice is the pinned Flipper-IRDB downloader with first-run consent, drag-and-drop assignment, field-level inline validation, Backup retention/filtering polish, localization, and packaging. These are specified above and are not claimed as implemented.

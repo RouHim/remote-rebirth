@@ -19,13 +19,14 @@ use crate::profile::{self, ModelProfile};
 use crate::sysinfo::SysInfo;
 use crate::transport::{RemoteBackend, RemoteDescriptor, RemoteSelector, RemoteSession, read_file};
 
-/// The flags a Write or Restore shares.
+/// The paths and flags that identify one Write.
 #[derive(Debug, Clone, Copy)]
-#[cfg(feature = "cli")]
-pub struct Options {
+pub struct WriteRequest<'a> {
+    pub state_dir: &'a Path,
+    pub container_path: &'a Path,
+    pub backup_path: &'a Path,
     pub commit: bool,
     pub no_reboot: bool,
-    pub json: bool,
 }
 
 /// A prepared or committed Write without any CLI formatting.
@@ -44,46 +45,68 @@ pub struct WriteReport {
     pub journal: Option<PathBuf>,
 }
 
-impl WriteReport {
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
-        operation: &'static str,
-        commit: bool,
-        container: Option<&Path>,
-        backup: &Path,
-        size: usize,
-        backup_sha256: &str,
-        plan: WritePlan,
-        no_reboot: bool,
-        journal: Option<&Path>,
-    ) -> Self {
-        Self {
-            operation,
-            commit,
-            container: container.map(Path::to_path_buf),
-            backup: backup.to_path_buf(),
-            size,
-            backup_sha256: backup_sha256.to_string(),
-            bytes: plan.bytes,
-            chunks: plan.chunks,
-            data_packets: plan.data_packets,
-            reboot: !no_reboot,
-            journal: journal.map(Path::to_path_buf),
-        }
+/// Build the report for a Write that reached its dry run or its verified commit.
+fn settled(
+    operation: filewriter::Operation,
+    request: &WriteRequest<'_>,
+    commit: bool,
+    backup_sha256: &str,
+    size: usize,
+    plan: WritePlan,
+    journal: Option<&Path>,
+) -> WriteReport {
+    WriteReport {
+        operation: operation.as_str(),
+        commit,
+        container: Some(request.container_path.to_path_buf()),
+        backup: request.backup_path.to_path_buf(),
+        size,
+        backup_sha256: backup_sha256.to_string(),
+        bytes: plan.bytes,
+        chunks: plan.chunks,
+        data_packets: plan.data_packets,
+        reboot: !request.no_reboot,
+        journal: journal.map(Path::to_path_buf),
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Build the report for a Restore. A Restore names no Container of its own.
+pub(crate) fn restore_report(
+    request: &crate::restore::RestoreRequest<'_>,
+    commit: bool,
+    backup_sha256: &str,
+    size: usize,
+    plan: WritePlan,
+    journal: Option<&Path>,
+) -> WriteReport {
+    WriteReport {
+        operation: filewriter::Operation::Restore.as_str(),
+        commit,
+        container: None,
+        backup: request.backup_path.to_path_buf(),
+        size,
+        backup_sha256: backup_sha256.to_string(),
+        bytes: plan.bytes,
+        chunks: plan.chunks,
+        data_packets: plan.data_packets,
+        reboot: !request.no_reboot,
+        journal: journal.map(Path::to_path_buf),
+    }
+}
+
 pub fn perform(
     backend: &mut dyn RemoteBackend,
     clock: &dyn Clock,
-    state_dir: &Path,
-    container_path: &Path,
-    backup_path: &Path,
-    commit: bool,
-    no_reboot: bool,
+    request: WriteRequest<'_>,
     progress: &mut dyn FnMut(crate::Progress),
 ) -> Result<WriteReport, Error> {
+    let WriteRequest {
+        state_dir,
+        container_path,
+        backup_path,
+        commit,
+        no_reboot,
+    } = request;
     let span = tracing::info_span!(
         "write",
         container = %container_path.display(),
@@ -120,15 +143,13 @@ pub fn perform(
     let write_plan = filewriter::plan(container.len());
 
     if !commit {
-        return Ok(WriteReport::new(
-            filewriter::Operation::Write.as_str(),
+        return Ok(settled(
+            filewriter::Operation::Write,
+            &request,
             false,
-            Some(container_path),
-            backup_path,
-            container.len(),
             &sidecar.sha256,
+            container.len(),
             write_plan,
-            no_reboot,
             None,
         ));
     }
@@ -155,15 +176,13 @@ pub fn perform(
     )?;
     tracing::info!("committed Write finished and verified");
 
-    Ok(WriteReport::new(
-        filewriter::Operation::Write.as_str(),
+    Ok(settled(
+        filewriter::Operation::Write,
+        &request,
         true,
-        Some(container_path),
-        backup_path,
-        container.len(),
         &sidecar.sha256,
+        container.len(),
         write_plan,
-        no_reboot,
         Some(journal.path()),
     ))
 }
@@ -172,42 +191,13 @@ pub fn perform(
 pub fn run(
     backend: &mut dyn RemoteBackend,
     clock: &dyn Clock,
-    state_dir: &Path,
-    container_path: &Path,
-    backup_path: &Path,
-    options: Options,
+    request: WriteRequest<'_>,
+    json: bool,
     stdout: &mut dyn Write,
+    progress: &mut dyn FnMut(crate::Progress),
 ) -> Result<(), Error> {
-    let outcome = perform(
-        backend,
-        clock,
-        state_dir,
-        container_path,
-        backup_path,
-        options.commit,
-        options.no_reboot,
-        &mut crate::progress::ignore,
-    )?;
-    let plan = WritePlan {
-        bytes: outcome.bytes,
-        chunks: outcome.chunks,
-        data_packets: outcome.data_packets,
-    };
-    report(
-        options.json,
-        stdout,
-        &WriteOutput::new(
-            outcome.operation,
-            outcome.commit,
-            outcome.container.as_deref(),
-            &outcome.backup,
-            outcome.size,
-            &outcome.backup_sha256,
-            plan,
-            !outcome.reboot,
-            outcome.journal.as_deref(),
-        ),
-    )
+    let outcome = perform(backend, clock, request, progress)?;
+    report(json, stdout, &WriteOutput::from_report(&outcome))
 }
 
 /// Run a commit, and on a protocol failure reopen a fresh session so the failure is not reported
@@ -384,6 +374,13 @@ pub(crate) fn check_remote(
             sysinfo.architecture, sysinfo.skin
         ))
     })?;
+    if !profile::firmware_matches(profile, sysinfo.firmware_version.as_deref()) {
+        tracing::warn!(
+            detected = sysinfo.firmware_version.as_deref().unwrap_or("unknown"),
+            measured = profile.firmware,
+            "firmware differs from the version the write sequence was verified on"
+        );
+    }
     if sidecar.architecture != sysinfo.architecture
         || sidecar.skin != sysinfo.skin
         || sidecar.model != profile.model
@@ -464,31 +461,26 @@ pub(crate) struct WriteOutput<'a> {
 
 #[cfg(feature = "cli")]
 impl<'a> WriteOutput<'a> {
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
-        operation: &'a str,
-        commit: bool,
-        container: Option<&Path>,
-        backup: &Path,
-        size: usize,
-        backup_sha256: &'a str,
-        plan: WritePlan,
-        no_reboot: bool,
-        journal: Option<&Path>,
-    ) -> Self {
+    pub(crate) fn from_report(report: &'a WriteReport) -> Self {
         Self {
             schema_version: 1,
-            operation,
-            commit,
-            container: container.map(|path| path.display().to_string()),
-            backup: backup.display().to_string(),
-            size,
-            backup_sha256,
-            bytes: plan.bytes,
-            chunks: plan.chunks,
-            data_packets: plan.data_packets,
-            reboot: !no_reboot,
-            journal: journal.map(|path| path.display().to_string()),
+            operation: report.operation,
+            commit: report.commit,
+            container: report
+                .container
+                .as_deref()
+                .map(|path| path.display().to_string()),
+            backup: report.backup.display().to_string(),
+            size: report.size,
+            backup_sha256: &report.backup_sha256,
+            bytes: report.bytes,
+            chunks: report.chunks,
+            data_packets: report.data_packets,
+            reboot: report.reboot,
+            journal: report
+                .journal
+                .as_deref()
+                .map(|path| path.display().to_string()),
         }
     }
 }

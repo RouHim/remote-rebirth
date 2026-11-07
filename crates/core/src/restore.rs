@@ -6,27 +6,35 @@ use crate::clock::Clock;
 use crate::detect;
 use crate::error::Error;
 use crate::filewriter;
-#[cfg(feature = "cli")]
-use crate::filewriter::WritePlan;
 use crate::journal::Journal;
 use crate::progress::Progress;
-#[cfg(feature = "cli")]
-use crate::progress::ignore;
 use crate::transport::RemoteBackend;
-use crate::write::{self, WriteReport};
 #[cfg(feature = "cli")]
-use crate::write::{Options, WriteOutput};
+use crate::write::WriteOutput;
+use crate::write::{self, WriteReport};
+
+/// The paths and flags that identify one Restore.
+#[derive(Debug, Clone, Copy)]
+pub struct RestoreRequest<'a> {
+    pub state_dir: &'a Path,
+    pub backup_path: &'a Path,
+    pub commit: bool,
+    pub no_reboot: bool,
+}
 
 /// A prepared or committed Restore without any CLI formatting.
 pub fn perform(
     backend: &mut dyn RemoteBackend,
     clock: &dyn Clock,
-    state_dir: &Path,
-    backup_path: &Path,
-    commit: bool,
-    no_reboot: bool,
+    request: RestoreRequest<'_>,
     progress: &mut dyn FnMut(Progress),
 ) -> Result<WriteReport, Error> {
+    let RestoreRequest {
+        state_dir,
+        backup_path,
+        commit,
+        no_reboot,
+    } = request;
     let span = tracing::info_span!(
         "restore",
         backup = %backup_path.display(),
@@ -50,15 +58,12 @@ pub fn perform(
     let write_plan = filewriter::plan(backup.len());
 
     if !commit {
-        return Ok(WriteReport::new(
-            filewriter::Operation::Restore.as_str(),
+        return Ok(write::restore_report(
+            &request,
             false,
-            None,
-            backup_path,
-            backup.len(),
             &sidecar.sha256,
+            backup.len(),
             write_plan,
-            no_reboot,
             None,
         ));
     }
@@ -85,15 +90,12 @@ pub fn perform(
     )?;
     tracing::info!("committed Restore finished and verified");
 
-    Ok(WriteReport::new(
-        filewriter::Operation::Restore.as_str(),
+    Ok(write::restore_report(
+        &request,
         true,
-        None,
-        backup_path,
-        backup.len(),
         &sidecar.sha256,
+        backup.len(),
         write_plan,
-        no_reboot,
         Some(journal.path()),
     ))
 }
@@ -102,38 +104,11 @@ pub fn perform(
 pub fn run(
     backend: &mut dyn RemoteBackend,
     clock: &dyn Clock,
-    state_dir: &Path,
-    backup_path: &Path,
-    options: Options,
+    request: RestoreRequest<'_>,
+    json: bool,
     stdout: &mut dyn Write,
+    progress: &mut dyn FnMut(crate::Progress),
 ) -> Result<(), Error> {
-    let outcome = perform(
-        backend,
-        clock,
-        state_dir,
-        backup_path,
-        options.commit,
-        options.no_reboot,
-        &mut ignore,
-    )?;
-    let plan = WritePlan {
-        bytes: outcome.bytes,
-        chunks: outcome.chunks,
-        data_packets: outcome.data_packets,
-    };
-    write::report(
-        options.json,
-        stdout,
-        &WriteOutput::new(
-            outcome.operation,
-            outcome.commit,
-            None,
-            &outcome.backup,
-            outcome.size,
-            &outcome.backup_sha256,
-            plan,
-            !outcome.reboot,
-            outcome.journal.as_deref(),
-        ),
-    )
+    let outcome = perform(backend, clock, request, progress)?;
+    write::report(json, stdout, &WriteOutput::from_report(&outcome))
 }

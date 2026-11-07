@@ -10,9 +10,11 @@
 //! one of the six protocol encoders. [`IrRecord`] is the stored form: carrier,
 //! class, and pointer groups of mark/space duration words.
 
+// Production reaches the IR codec through this facade: `compose` and `compose_build` name these.
+pub use crate::ir_types::{ImportedCommand, IrRecord, IrSource, IrSourceKind, Provenance, import};
+
+// Codec internals that only the codec tests name.
+#[cfg(test)]
 pub use crate::ir_record::pack_block;
-pub use crate::ir_types::{
-    BLOCK_TERMINATOR, CLASS_STREAM, DURATION_MASK, EncodedIrRecord, ImportedCommand, IrError,
-    IrPointerGroup, IrRecord, IrSource, IrSourceKind, LEAD_IN_US, MARK_BIT, MAX_DURATION_US,
-    MAX_POINTER_GROUPS, Provenance, Pulse, RECORD_POINTER_BIAS, import,
-};
+#[cfg(test)]
+pub use crate::ir_types::{CLASS_STREAM, DURATION_MASK, IrError, MARK_BIT, Pulse};

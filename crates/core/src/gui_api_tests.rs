@@ -4,7 +4,9 @@ use crate::gui_api::*;
 
 use super::*;
 use crate::fake::{FakeBackend, FakeDevice};
+use crate::restore::RestoreRequest;
 use crate::transport::RemoteDescriptor;
+use crate::write::WriteRequest;
 
 fn fake_harmony_300() -> FakeBackend {
     let moment = time::OffsetDateTime::from_unix_timestamp(1_800_000_000).expect("time");
@@ -92,11 +94,13 @@ fn backup_and_compose_return_typed_reports() {
     let prepared = write(
         &mut backend,
         &clock,
-        directory.path(),
-        &container_path,
-        &backup_path,
-        false,
-        false,
+        WriteRequest {
+            state_dir: directory.path(),
+            container_path: &container_path,
+            backup_path: &backup_path,
+            commit: false,
+            no_reboot: false,
+        },
         &mut |_| {},
     )
     .expect("prepare write");
@@ -106,13 +110,75 @@ fn backup_and_compose_return_typed_reports() {
     let prepared = restore(
         &mut backend,
         &clock,
-        directory.path(),
-        &backup_path,
-        false,
-        false,
+        RestoreRequest {
+            state_dir: directory.path(),
+            backup_path: &backup_path,
+            commit: false,
+            no_reboot: false,
+        },
         &mut |_| {},
     )
     .expect("prepare restore");
     assert!(!prepared.commit);
     assert_eq!(prepared.operation, "restore");
+}
+
+#[test]
+fn list_flipper_commands_matches_what_an_import_accepts() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let good = directory.path().join("TV.ir");
+    std::fs::write(
+        &good,
+        "Filetype: IR signals file\nVersion: 1\nname: Power\ntype: raw\nfrequency: 38000\ndata: 9000 4500 560 560\nname: Vol Up\ntype: raw\ndata: 9000 4500 560 1690\n",
+    )
+    .expect("library file");
+    let commands = list_flipper_commands(&good).expect("a valid Flipper file");
+    assert_eq!(commands, ["Power", "Vol Up"]);
+
+    // A `name` with no `type` is not a command an import could encode, so it is not offered.
+    let bad = directory.path().join("Broken.ir");
+    std::fs::write(
+        &bad,
+        "name: Power\nname: Volume\ntype: raw\ndata: 9000 4500\n",
+    )
+    .expect("broken file");
+    let commands = list_flipper_commands(&bad).expect("a parseable file");
+    assert_eq!(
+        commands,
+        ["Volume"],
+        "an entry without a type is not listed"
+    );
+
+    // A malformed timing word fails the whole file instead of hiding the problem.
+    let malformed = directory.path().join("Malformed.ir");
+    std::fs::write(
+        &malformed,
+        "name: Power\ntype: raw\ndata: 9000 4500 not-a-timing\n",
+    )
+    .expect("malformed file");
+    assert!(list_flipper_commands(&malformed).is_err());
+}
+
+#[test]
+fn backup_summary_is_typed_and_derives_the_backup_path() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let mut backend = fake_harmony_300();
+    let backup_path = directory.path().join("2026-11-05.bin");
+    let clock = SystemClock;
+    let report = backup(&mut backend, &clock, &backup_path, false).expect("backup");
+
+    let summary = backup_summary(&report.sidecar).expect("sidecar");
+    assert_eq!(summary.backup, backup_path);
+    assert_eq!(summary.sidecar, report.sidecar);
+    assert_eq!(summary.model, "Harmony 300");
+    assert_eq!(summary.skin, Some(79));
+    assert_eq!(summary.validation, "ok");
+    assert!(summary.size > 0);
+    assert_eq!(summary.sha256.len(), 64);
+
+    assert_eq!(
+        backup_sidecar(&backup_path),
+        report.sidecar,
+        "the path helper matches where the sidecar was written"
+    );
 }

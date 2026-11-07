@@ -8,9 +8,6 @@
 #[cfg(feature = "cli")]
 use std::io::Write;
 
-#[cfg(feature = "cli")]
-use serde::Serialize;
-
 use crate::error::Error;
 use crate::profile;
 #[cfg(feature = "cli")]
@@ -184,21 +181,21 @@ fn report_harmony(opened: &OpenedRemote, json: bool, stdout: &mut dyn Write) -> 
     );
 
     if json {
-        let output = DetectOutput {
-            schema_version: 1,
+        let report = crate::gui_api::DetectReport {
+            schema_version: crate::gui_api::DETECT_SCHEMA_VERSION,
             supported,
-            model,
+            model: model.to_string(),
             family,
             profile: profile.map(|profile| profile.id),
             architecture: info.architecture,
             skin: info.skin,
-            firmware_version: info.firmware_version.as_deref(),
-            hardware_version: info.hardware_version.as_deref(),
-            guid: info.guid.as_deref(),
-            serial: info.serial.as_deref(),
-            usb: UsbIdentity::from(&opened.descriptor),
+            firmware_version: info.firmware_version.clone(),
+            hardware_version: info.hardware_version.clone(),
+            guid: info.guid.clone(),
+            serial: info.serial.clone(),
+            usb: crate::gui_api::UsbIdentity::from(&opened.descriptor),
         };
-        serde_json::to_writer_pretty(&mut *stdout, &output)?;
+        serde_json::to_writer_pretty(&mut *stdout, &report)?;
         writeln!(stdout)?;
         return Ok(());
     }
@@ -252,10 +249,10 @@ fn report_other(
         "the connected Logitech device is not a Harmony Remote"
     );
     if json {
-        let output = DetectOutput {
-            schema_version: 1,
+        let report = crate::gui_api::DetectReport {
+            schema_version: crate::gui_api::DETECT_SCHEMA_VERSION,
             supported: false,
-            model: "unknown Logitech device",
+            model: "unknown Logitech device".into(),
             family: None,
             profile: None,
             architecture: None,
@@ -264,9 +261,9 @@ fn report_other(
             hardware_version: None,
             guid: None,
             serial: None,
-            usb: UsbIdentity::from(descriptor),
+            usb: crate::gui_api::UsbIdentity::from(descriptor),
         };
-        serde_json::to_writer_pretty(&mut *stdout, &output)?;
+        serde_json::to_writer_pretty(&mut *stdout, &report)?;
         writeln!(stdout)?;
         return Ok(());
     }
@@ -294,48 +291,4 @@ fn write_usb(stdout: &mut dyn Write, descriptor: &RemoteDescriptor) -> Result<()
         descriptor.address
     )?;
     Ok(())
-}
-
-#[derive(Serialize)]
-#[cfg(feature = "cli")]
-struct DetectOutput<'a> {
-    schema_version: u8,
-    supported: bool,
-    model: &'a str,
-    family: Option<&'static str>,
-    profile: Option<&'static str>,
-    architecture: Option<u8>,
-    skin: Option<u8>,
-    firmware_version: Option<&'a str>,
-    hardware_version: Option<&'a str>,
-    guid: Option<&'a str>,
-    serial: Option<&'a str>,
-    usb: UsbIdentity<'a>,
-}
-
-#[derive(Serialize)]
-#[cfg(feature = "cli")]
-struct UsbIdentity<'a> {
-    vendor_id: u16,
-    product_id: u16,
-    bcd_device: u16,
-    product: Option<&'a str>,
-    serial: Option<&'a str>,
-    bus: u8,
-    address: u8,
-}
-
-#[cfg(feature = "cli")]
-impl<'a> From<&'a RemoteDescriptor> for UsbIdentity<'a> {
-    fn from(descriptor: &'a RemoteDescriptor) -> Self {
-        Self {
-            vendor_id: descriptor.vendor_id,
-            product_id: descriptor.product_id,
-            bcd_device: descriptor.bcd_device,
-            product: descriptor.product.as_deref(),
-            serial: descriptor.serial.as_deref(),
-            bus: descriptor.bus,
-            address: descriptor.address,
-        }
-    }
 }

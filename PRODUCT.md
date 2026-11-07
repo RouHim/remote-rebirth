@@ -49,11 +49,12 @@ The GUI is English-only for v1; user-facing strings stay isolated for later tran
 
 ## Capabilities and Constraints
 
-Implemented first slice: Detect and identity, managed Backup library, Devices and Commands (local
-file or inline Pronto), Key Map with schematic buttons, mirrored table and command palette,
-volume/channel Routing, Compose, Prepare/Commit Write, Read-Back, Prepare/Commit Restore, Watch TV
-activity, Favourites, and a Settings page. The optional pinned Flipper-IRDB download and browser,
-drag-and-drop assignment and field-level inline validation are specified but not yet implemented.
+Implemented: Detect and identity, managed Backup library, Devices and Commands (local file or inline
+Pronto), Key Map with schematic buttons, mirrored table and command palette, volume/channel Routing,
+Compose, Prepare/Commit Write, Read-Back, Prepare/Commit Restore, Watch TV activity, Favourites, a
+Settings page, and an IR Library browser that scans a local folder and imports a file's commands.
+The optional pinned Flipper-IRDB download, drag-and-drop assignment and field-level inline validation
+are specified but not yet implemented.
 
 Hard constraints: the core and CLI contain no network client; the GUI may only download the IR
 Library after explicit owner consent. No firmware reads or writes, no IR learning or capture, no
@@ -73,16 +74,25 @@ identity.
 
 ## Evidence on Hand
 
+Durable documentation:
+
+- `GLOSSARY.md` — canonical domain terms (Remote, Model, Skin, Container, Backup, Device, Device Key,
+  Key Map, Routing, Command, IR Record).
+- `docs/adr/0001`–`0009` — hardware and offline constraints.
+- `docs/core-api.md` — the public core surface, with a source citation for every item.
+- `docs/hardware-acceptance.md` — physical acceptance gate.
+
+Internal working notes (not durable):
+
 - `.scratch/remote-rebirth-gui/screenshots/` — the shipped owner's-manual GUI at 1240×820 and
-  1040×680, plus `first-slice/` with the superseded 960×1080 captures of the first slice.
+  1040×680.
 - `.scratch/remote-rebirth-gui/spec.md` — GUI scope, user stories, decisions and implementation
   status.
 - `.scratch/remote-rebirth/spec.md` — core and CLI contract, including detection, compose, write and
   restore semantics.
-- `GLOSSARY.md` — canonical domain terms (Remote, Model, Skin, Container, Backup, Device, Device Key,
-  Key Map, Routing, Command, IR Record).
-- `docs/adr/0001`–`0009` — hardware and offline constraints.
-- `docs/hardware-acceptance.md` — physical acceptance gate.
+
+`.scratch/` is the local issue tracker: it is edited continuously and is not a stable reference.
+Anything that must survive belongs in `GLOSSARY.md`, `docs/` or this file.
 
 There are no real customer testimonials, logos, screenshots of Logitech software, licensed
 photography or benchmark claims. Do not fabricate them. The remote is a physical object the owner
@@ -102,8 +112,13 @@ already has; no product photography ships with the application.
 
 ## Accessibility & Inclusion
 
-Every action must be reachable by keyboard, with assignment parity between mouse and keyboard.
-Focus is always visible; no state is conveyed by colour alone. The 1040×680 minimum window must not
-clip controls. Labels and errors use plain language rather than internal key names or protocol terms,
-which stay behind the technical-details setting. Text contrast targets WCAG AA against the committed
-palette.
+Every action should be reachable by keyboard, with assignment parity between mouse and keyboard.
+Focus should always be visible; no state is conveyed by colour alone. The 1040×680 minimum window
+must not clip controls. Labels and errors use plain language rather than internal key names or
+protocol terms, which stay behind the technical-details setting. Text contrast targets WCAG AA
+against the committed palette.
+
+Open, not yet delivered: full Tab traversal and a visible button focus ring. A shortcut subset ships
+today — chapter navigation, backup/review/detect, device and key traversal, command assignment, and
+dismissal. Add/delete Device, add Command, export/import and the Settings and Remote-page toggles
+have no keyboard path yet.

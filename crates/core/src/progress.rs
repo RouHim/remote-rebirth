@@ -7,7 +7,3 @@ pub enum Progress {
     /// Bytes acknowledged by the Remote within the current write.
     Written { bytes: usize, total: usize },
 }
-
-/// A sink for callers that do not display progress.
-#[cfg(feature = "cli")]
-pub fn ignore(_: Progress) {}

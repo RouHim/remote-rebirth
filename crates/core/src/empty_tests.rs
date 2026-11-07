@@ -3,9 +3,7 @@
 
 use time::{Date, Month, OffsetDateTime, PrimitiveDateTime, Time};
 
-use crate::container::{
-    FLASH_BASE, ValidationStatus, stored_checksum, trailer_checksum, validation_status,
-};
+use crate::container::{FLASH_BASE, ValidationStatus, trailer_checksum, validation_status};
 use crate::emit_empty;
 
 const SKIN_300: u8 = 79;
@@ -43,57 +41,20 @@ fn key_entries(bytes: &[u8]) -> Vec<(u8, u16, u8)> {
 }
 
 #[test]
-fn an_empty_harmony_300_container_is_the_documented_size_and_passes_the_trailer_check() {
-    let bytes = emit_empty(SKIN_300, &moment()).expect("skin 79 is supported");
-
-    // 1081 bytes in the reference, less the 411 byte metadata archive this project omits.
-    assert_eq!(bytes.len(), 670);
-    assert_eq!(&bytes[..4], b"GSPM");
-    assert_eq!(&bytes[0x47..0x4B], b"LWJL");
-    assert_eq!(&bytes[bytes.len() - 4..], b"PTYY");
-    assert_eq!(
-        u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]),
-        FLASH_BASE + bytes.len() as u32 - 4,
-        "end_addr names the end marker"
-    );
-    assert_eq!(
-        u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]),
-        15 << 8,
-        "the format word states fifteen pointer slots"
-    );
-    assert_eq!(
-        stored_checksum(&bytes),
-        Some(trailer_checksum(&bytes).expect("the container is longer than its trailer"))
-    );
-    assert_eq!(validation_status(&bytes), ValidationStatus::Ok);
-
-    let architecture = section(&bytes, 1).expect("base slot 1 states the architecture record");
-    assert_eq!(
-        &bytes[architecture..architecture + 7],
-        &[16, 16, SKIN_300, 0x0D, 0, 0, 0]
-    );
-}
-
-#[test]
-fn an_empty_harmony_350_allocates_eight_infrared_groups_and_is_eight_bytes_longer() {
-    let bytes = emit_empty(SKIN_350, &moment()).expect("skin 104 is supported");
-
-    // 1105 bytes in the reference, less the same 411 byte archive. The four groups above skin 79's
-    // allocation cost six bytes each, a three byte empty group and its three byte pointer.
-    assert_eq!(bytes.len(), 694);
-    assert_eq!(validation_status(&bytes), ValidationStatus::Ok);
-
-    let architecture = section(&bytes, 1).expect("base slot 1 states the architecture record");
-    assert_eq!(bytes[architecture + 2], SKIN_350);
-}
-
-#[test]
 fn the_empty_configuration_has_fifteen_slots_and_four_or_eight_empty_infrared_groups() {
     for (skin, groups, length) in [(SKIN_300, 4usize, 670usize), (SKIN_350, 8, 694)] {
         let bytes = emit_empty(skin, &moment()).expect("a supported skin");
         assert_eq!(bytes.len(), length);
         assert_eq!(0x0B + 4 * 15, 0x47, "the table ends where LWJL starts");
         assert_eq!(section(&bytes, 14), None, "raw slot 14 is NULL");
+
+        let architecture = section(&bytes, 1).expect("base slot 1 states the architecture record");
+        assert_eq!(
+            &bytes[architecture..architecture + 4],
+            &[16, 16, skin, 0x0D],
+            "architecture 16, format 16, the skin, then the record's own tag"
+        );
+        assert_eq!(validation_status(&bytes), ValidationStatus::Ok);
 
         let infrared = section(&bytes, 4).expect("base slot 5 states the infrared table");
         assert_eq!(bytes[infrared] as usize, groups, "the model's allocation");

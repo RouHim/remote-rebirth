@@ -9,14 +9,29 @@ not depend on a Logitech account or service.
 
 ## Build
 
+Requires Rust 1.88 or newer (edition 2024 plus the MSRV of the pinned dependencies).
+
 ```sh
 cargo build --release
 ```
 
 The CLI binary is `target/release/remote-rebirth`; the GUI binary is
-`target/release/remote-rebirth-gui`. The transport uses hidapi's libusb backend, so the build
-needs libusb's development files (`libusb` and `pkg-config` on Arch; `libusb-1.0-0-dev` and
-`pkg-config` on Debian/Ubuntu).
+`target/release/remote-rebirth-gui`. The transport uses hidapi's libusb backend, whose build script
+compiles C and probes libusb through `pkg-config`, so the build needs a C toolchain plus libusb's
+development files (`base-devel`, `libusb` and `pkg-config` on Arch; `build-essential`,
+`libusb-1.0-0-dev` and `pkg-config` on Debian/Ubuntu).
+
+## Testing
+
+```sh
+cargo test --workspace
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+Tests use the fake Remote and a fixed clock, so they need no hardware and touch no real
+configuration. Most of the suite lives inline in `crates/*/src` (sibling `*_tests.rs` modules);
+`crates/cli/tests/cli.rs` holds the CLI smoke tests, which run the built binary.
 
 ## USB permissions
 
@@ -28,9 +43,19 @@ sudo udevadm control --reload-rules
 sudo udevadm trigger
 ```
 
-The rule covers the USB device and its `hidraw` node and grants the `wheel` group access, so it works
-for local and headless/SSH sessions. Replace `wheel` with your group if needed. The transport opens the
-USB device through libusb; the `hidraw` node is not required, and the rule's hidraw line is harmless.
+The rule covers the USB device and its `hidraw` node and grants a dedicated `remote-rebirth` group
+access, so it works for local and headless/SSH sessions without handing raw HID write access to every
+administrator:
+
+```sh
+sudo groupadd -f remote-rebirth
+sudo usermod -aG remote-rebirth $USER
+```
+
+Log out and back in so the new group membership takes effect; an SSH session needs the same
+re-login. Members of `wheel` may substitute `GROUP="wheel"` in the rule if they prefer, at the cost
+that every administrator then gets that access. The transport opens the USB device through libusb;
+the `hidraw` node is not required, and the rule's hidraw line is harmless.
 Reconnect the Remote after installing the rule; for an already-connected unit, a software re-authorise
 (`echo 0/1` to `/sys/bus/usb/devices/<port>/authorized`) re-enumerates it without physical access.
 
@@ -39,15 +64,23 @@ command; the device node changes.
 
 ## Desktop GUI
 
-`cargo run -p remote-rebirth-gui` starts the first-slice desktop application. It links the same core
-as the CLI, never shells out, and contains no network client in this slice.
+`cargo run -p remote-rebirth-gui` starts the desktop application. It needs a Wayland or X11 session
+with a working GPU/GL driver; the CLI is the headless surface. The GUI links the same core as the
+CLI, never shells out, and contains no network client.
 
 The GUI manages an active Model at `$XDG_DATA_HOME/remote-rebirth/model.json` (falling back to
 `$HOME/.local/share/remote-rebirth/model.json`), keeps automatic and manual Backups under
-`backups/`, and drives the same verified Write and Restore path as the CLI. The first slice covers
-Detect, Backup, Device and Command editing, the Key Map with volume/channel Routing, Prepare/Commit
-Write, and Prepare/Commit Restore. The IR Library browser, drag-and-drop assignment, and the full
-Favourites and Activity polish are the next slice.
+`backups/`, and drives the same verified Write and Restore path as the CLI. It covers Detect,
+Backup, Device and Command editing, the Key Map with volume/channel Routing, Prepare/Commit Write,
+Prepare/Commit Restore, the Watch TV Activity and Favourites, and an IR Library browser that scans
+a local folder of Flipper `.ir` files and imports their commands. The pinned Flipper-IRDB download,
+drag-and-drop assignment, and deeper Favourites and Activity polish are the next slice.
+
+## Core API
+
+The public surface of `remote-rebirth-core` — the CLI seam, the typed GUI operations, the Model and
+Profile types, the transport traits and the exit-code taxonomy — is documented in
+[`docs/core-api.md`](docs/core-api.md), with a source citation for every item.
 
 ## Commands
 
@@ -66,6 +99,16 @@ remote-rebirth restore --backup <path> [--commit] [--no-reboot] [--json]
 `--print-schema` prints the embedded JSON Schema for that command's data without requiring its
 other inputs: `backup` prints the Backup sidecar schema, `compose` prints the model schema, and
 `compose --print-resolved-schema` prints the resolved-model sidecar schema.
+
+## Model schema versions
+
+Model v2 is the current format. `compose --print-schema` prints the v2 schema, `compose` reads v2
+Models, and the resolved-model sidecar it writes declares `schema_version: 2`. Model v1 is still
+accepted on input — the validator allows `schema_version` 1 through 2 (`MIN_SCHEMA_VERSION`) — as
+long as a v1 Model declares no `routing`. The v1 schema files stay in the repository at
+`crates/core/schema/model-v1.json` and `crates/core/schema/resolved-model-v1.json`; no CLI flag
+prints either of them. `resolved-model-v1.json` is unreferenced — no source, test or flag reads it —
+and is retained for now. New Models should be v2.
 
 ## Safety model
 
@@ -94,7 +137,21 @@ other inputs: `backup` prints the Backup sidecar schema, `compose` prints the mo
 | 5 | Protocol error: refusal, malformed packet, short read, checksum check not `m` |
 | 6 | Verification error: Read-Back mismatch |
 
-JSON goes to stdout; progress and diagnostics go to stderr.
+JSON goes to stdout; diagnostics go to stderr. Write and Restore print their stages and acknowledged
+byte counts to stderr when stderr is a terminal, so a piped transcript stays clean.
+
+## Supported hardware and platforms
+
+Linux x86_64 is the only supported platform: the transport is hidapi's libusb backend and Detect
+reads `/sys/bus/usb/devices` directly. `remote-rebirth-core` refuses to compile on other targets
+with a `compile_error!` (`crates/core/src/lib.rs` tail).
+
+| Device | Product | Status |
+| --- | --- | --- |
+| Harmony 300 | `046d:c124` | Supported. Skins 78 and 79, Architecture 16, measured on firmware 1.4.0. A different firmware major.minor is accepted but logs a warning that the write sequence is unverified on it (`crates/core/src/profile.rs:331`, `crates/core/src/write.rs:381`). |
+| Harmony 350 | `046d:c124` | Recognised and refused: shares the product id but its skin 104 has no profile. |
+| Harmony 200 | `046d:c125` | Recognised and refused: Detect reads its identity, then reports it as unsupported. |
+| Other Logitech devices | any | Reported unsupported; no configuration is written. |
 
 ## IR Sources
 

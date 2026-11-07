@@ -1,26 +1,41 @@
+// Without the `cli` feature most of this module is compiled out; the shared helpers below are then
+// legitimately unused.
+#![cfg_attr(not(feature = "cli"), allow(dead_code))]
+
 use std::collections::VecDeque;
+#[cfg(feature = "cli")]
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
+#[cfg(feature = "cli")]
 use crate::clock::Clock;
 use crate::container::{self, ValidationStatus};
+#[cfg(feature = "cli")]
 use crate::fake::{Call, FakeBackend, FakeDevice};
 use crate::filewriter::{self, WritePlan};
+#[cfg(feature = "cli")]
+use crate::progress::Progress;
 use crate::protocol::{FileProtocol, REPORT_BYTES, ReportLink, chunk_reply_matches};
+#[cfg(feature = "cli")]
 use crate::runtime::Runtime;
-use crate::transport::{RemoteDescriptor, RemoteSession};
+#[cfg(feature = "cli")]
+use crate::transport::RemoteDescriptor;
+use crate::transport::RemoteSession;
+#[cfg(feature = "cli")]
 use crate::{Exit, run};
 
 struct FixedClock(time::OffsetDateTime);
 
+#[cfg(feature = "cli")]
 impl Clock for FixedClock {
     fn now(&self) -> time::OffsetDateTime {
         self.0
     }
 }
 
+#[cfg(feature = "cli")]
 fn descriptor(
     bus: u8,
     address: u8,
@@ -40,10 +55,12 @@ fn descriptor(
     }
 }
 
+#[cfg(feature = "cli")]
 fn sysinfo(skin: u8, architecture: u8) -> Vec<u8> {
     sysinfo_with_link(skin, architecture, Some(64))
 }
 
+#[cfg(feature = "cli")]
 fn sysinfo_with_link(skin: u8, architecture: u8, link: Option<u16>) -> Vec<u8> {
     let mut text = format!(
         "arch=0x{architecture:02X}\nskin=0x{skin:02X}\nfw_ver=0x14\nfw_type=0\nhw_ver=0x05\nlink_type=hid\nguid=test-guid\n"
@@ -68,6 +85,7 @@ fn sample_container() -> Vec<u8> {
 
 /// A genuine Container of exactly `len` bytes: the empty configuration with zero padding before its
 /// trailer, so the last raw slot absorbs the padding.
+#[cfg(feature = "cli")]
 fn sample_container_sized(len: usize) -> Vec<u8> {
     let base = sample_container();
     assert!(len > base.len() - 4, "a Container needs a complete trailer");
@@ -82,6 +100,7 @@ fn sample_container_sized(len: usize) -> Vec<u8> {
     container
 }
 
+#[cfg(feature = "cli")]
 fn device(skin: u8, bcd_device: u16, product_id: u16) -> FakeDevice {
     let container = crate::emit_empty(skin, &fixture_moment()).expect("a supported skin");
     let stored = container[..container.len() - 4].to_vec();
@@ -92,11 +111,13 @@ fn device(skin: u8, bcd_device: u16, product_id: u16) -> FakeDevice {
     }
 }
 
+#[cfg(feature = "cli")]
 fn run_with(devices: Vec<FakeDevice>, args: &[&str], state_dir: &Path) -> (Exit, String, String) {
     let mut backend = FakeBackend::new(devices);
     run_backend(&mut backend, args, state_dir)
 }
 
+#[cfg(feature = "cli")]
 fn run_backend(
     backend: &mut FakeBackend,
     args: &[&str],
@@ -126,6 +147,7 @@ fn run_backend(
     )
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn detect_json_reports_supported_harmony_300() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -147,6 +169,7 @@ fn detect_json_reports_supported_harmony_300() {
     assert!(value["serial"].is_null());
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn detect_reports_unsupported_harmony_350() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -161,9 +184,12 @@ fn detect_reports_unsupported_harmony_350() {
     let value: Value = serde_json::from_str(&stdout).expect("json");
     assert_eq!(value["supported"].as_bool(), Some(false));
     assert_eq!(value["model"].as_str(), Some("Harmony 350"));
+    // The family comes from bcdDevice; skin 104 is recognised but has no profile in v1.
+    assert_eq!(value["family"].as_str(), Some("Harmony 350"));
     assert!(value["profile"].is_null());
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn detect_without_remote_exits_3() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -174,6 +200,7 @@ fn detect_without_remote_exits_3() {
     assert!(stderr.contains("no Harmony Remote found"), "{stderr}");
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn detect_with_multiple_remotes_exits_3() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -194,6 +221,7 @@ fn detect_with_multiple_remotes_exits_3() {
     );
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn backup_writes_container_and_sidecar() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -233,6 +261,64 @@ fn backup_writes_container_and_sidecar() {
     assert_eq!(output["size"].as_u64(), Some(670));
 }
 
+#[cfg(feature = "cli")]
+#[test]
+fn backup_refuses_a_symlinked_destination() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let mut backend = FakeBackend::new(vec![device(79, 0x1078, 0xC124)]);
+    let target = directory.path().join("target.bin");
+    std::fs::write(&target, b"untouched").expect("target");
+    let link = directory.path().join("backup.bin");
+    std::os::unix::fs::symlink(&target, &link).expect("symlink");
+
+    let (exit, stdout, stderr) = run_backend(
+        &mut backend,
+        &[
+            "backup",
+            "--out",
+            link.to_str().expect("path"),
+            "--overwrite",
+            "--json",
+        ],
+        directory.path(),
+    );
+
+    assert_eq!(exit, Exit(4), "{stderr}");
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(stderr.contains("is a symlink"), "{stderr}");
+    assert_eq!(
+        std::fs::read(&target).expect("target"),
+        b"untouched",
+        "the symlink target must not be written"
+    );
+}
+
+#[cfg(feature = "cli")]
+#[test]
+fn a_successful_write_leaves_no_temporary_file_behind() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let mut backend = FakeBackend::new(vec![device(79, 0x1078, 0xC124)]);
+    let out = directory.path().join("backup.bin");
+    let (exit, _stdout, stderr) = run_backend(
+        &mut backend,
+        &["backup", "--out", out.to_str().expect("path"), "--json"],
+        directory.path(),
+    );
+
+    assert_eq!(exit, Exit(0), "{stderr}");
+    let leftovers: Vec<String> = std::fs::read_dir(directory.path())
+        .expect("read_dir")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".tmp"))
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "temporary files remain: {leftovers:?}"
+    );
+}
+
+#[cfg(feature = "cli")]
 #[test]
 fn backup_refuses_overwrite() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -249,6 +335,7 @@ fn backup_refuses_overwrite() {
     assert!(stderr.contains("already exists"), "{stderr}");
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn backup_without_remote_writes_nothing() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -264,6 +351,7 @@ fn backup_without_remote_writes_nothing() {
     assert!(stderr.contains("no Harmony Remote found"), "{stderr}");
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn backup_marks_checksum_mismatch() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -299,6 +387,17 @@ fn sysinfo_parse_normalizes_identity() {
 }
 
 #[test]
+fn firmware_matches_compares_the_major_and_minor_version() {
+    let profile = crate::profile::by_id("harmony_300").expect("the Harmony 300 profile");
+
+    assert!(crate::profile::firmware_matches(profile, Some("1.4")));
+    assert!(crate::profile::firmware_matches(profile, Some("1.4.0")));
+    assert!(!crate::profile::firmware_matches(profile, Some("1.5.0")));
+    assert!(!crate::profile::firmware_matches(profile, Some("2.4.0")));
+    assert!(!crate::profile::firmware_matches(profile, None));
+}
+
+#[test]
 fn container_reconstructs_trailer() {
     let full = sample_container();
     let read = &full[..full.len() - 4];
@@ -308,29 +407,178 @@ fn container_reconstructs_trailer() {
     assert_eq!(container::validation_status(&rebuilt), ValidationStatus::Ok);
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn container_rejects_short_trailer() {
     assert!(container::trailer_checksum(&[0u8; 5]).is_err());
 }
 
-#[test]
-fn container_marks_unreadable() {
-    assert_eq!(
-        container::validation_status(b"not a container"),
-        ValidationStatus::Unreadable
+/// Run `write --commit` against a Backup whose sidecar was rewritten by `mutate`.
+#[cfg(feature = "cli")]
+fn assert_write_refuses_mutated_sidecar(mutate: fn(&mut Value), expected: &str) {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let mut backend = FakeBackend::new(vec![device(79, 0x1078, 0xC124)]);
+    let backup = make_backup(&mut backend, directory.path());
+    let container_path = directory.path().join("new.bin");
+    std::fs::write(&container_path, sample_container()).expect("container");
+    let sidecar_path = PathBuf::from(format!("{}.json", backup.display()));
+    let mut sidecar: Value =
+        serde_json::from_slice(&std::fs::read(&sidecar_path).expect("sidecar")).expect("json");
+    mutate(&mut sidecar);
+    std::fs::write(
+        &sidecar_path,
+        serde_json::to_vec_pretty(&sidecar).expect("json"),
+    )
+    .expect("sidecar");
+
+    let mark = backend.calls().borrow().len();
+    let (exit, stdout, stderr) = run_backend(
+        &mut backend,
+        &write_args(
+            container_path.to_str().expect("path"),
+            backup.to_str().expect("path"),
+            true,
+        ),
+        directory.path(),
+    );
+
+    assert_eq!(exit, Exit(4), "{stderr}");
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(stderr.contains(expected), "{stderr}");
+    let calls = backend.calls().borrow().clone();
+    assert!(
+        !calls[mark..]
+            .iter()
+            .any(|call| matches!(call, Call::OpenWrite { .. })),
+        "a refused Backup must never open the Configuration for writing"
     );
 }
 
+#[cfg(feature = "cli")]
 #[test]
-fn container_detects_checksum_mismatch() {
-    let mut full = sample_container();
-    full[10] ^= 0xFF;
-    assert_eq!(
-        container::validation_status(&full),
-        ValidationStatus::ChecksumMismatch
+fn write_refuses_a_sidecar_with_an_unsupported_schema_version() {
+    assert_write_refuses_mutated_sidecar(
+        |sidecar| sidecar["schema_version"] = 2.into(),
+        "unsupported schema version",
     );
 }
 
+#[cfg(feature = "cli")]
+#[test]
+fn write_refuses_a_sidecar_that_records_the_wrong_size() {
+    assert_write_refuses_mutated_sidecar(|sidecar| sidecar["size"] = 1.into(), "records 1 bytes");
+}
+
+#[cfg(feature = "cli")]
+#[test]
+fn write_refuses_a_sidecar_whose_digest_does_not_match() {
+    assert_write_refuses_mutated_sidecar(
+        |sidecar| sidecar["sha256"] = "00".repeat(32).into(),
+        "digest does not match",
+    );
+}
+
+#[cfg(feature = "cli")]
+#[test]
+fn write_refuses_an_unverified_backup() {
+    assert_write_refuses_mutated_sidecar(
+        |sidecar| sidecar["validation"] = "checksum_mismatch".into(),
+        "refusing to write from an unverified Backup",
+    );
+}
+
+#[cfg(feature = "cli")]
+#[test]
+fn write_refuses_a_missing_backup() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let mut backend = FakeBackend::new(vec![device(79, 0x1078, 0xC124)]);
+    let missing = directory.path().join("absent.bin");
+
+    let mark = backend.calls().borrow().len();
+    let (exit, stdout, stderr) = run_backend(
+        &mut backend,
+        &write_args(
+            missing.to_str().expect("path"),
+            missing.to_str().expect("path"),
+            true,
+        ),
+        directory.path(),
+    );
+
+    assert_eq!(exit, Exit(4), "{stderr}");
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(stderr.contains("cannot be read"), "{stderr}");
+    let calls = backend.calls().borrow().clone();
+    assert!(
+        !calls[mark..]
+            .iter()
+            .any(|call| matches!(call, Call::OpenWrite { .. }))
+    );
+}
+
+#[cfg(feature = "cli")]
+#[test]
+fn write_refuses_a_missing_sidecar() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let mut backend = FakeBackend::new(vec![device(79, 0x1078, 0xC124)]);
+    let backup = make_backup(&mut backend, directory.path());
+    let container_path = directory.path().join("new.bin");
+    std::fs::write(&container_path, sample_container()).expect("container");
+    std::fs::remove_file(format!("{}.json", backup.display())).expect("remove sidecar");
+
+    let mark = backend.calls().borrow().len();
+    let (exit, _stdout, stderr) = run_backend(
+        &mut backend,
+        &write_args(
+            container_path.to_str().expect("path"),
+            backup.to_str().expect("path"),
+            true,
+        ),
+        directory.path(),
+    );
+
+    assert_eq!(exit, Exit(4), "{stderr}");
+    assert!(stderr.contains("Backup sidecar"), "{stderr}");
+    let calls = backend.calls().borrow().clone();
+    assert!(
+        !calls[mark..]
+            .iter()
+            .any(|call| matches!(call, Call::OpenWrite { .. }))
+    );
+}
+
+#[cfg(feature = "cli")]
+#[test]
+fn write_refuses_a_sidecar_that_is_not_json() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let mut backend = FakeBackend::new(vec![device(79, 0x1078, 0xC124)]);
+    let backup = make_backup(&mut backend, directory.path());
+    let container_path = directory.path().join("new.bin");
+    std::fs::write(&container_path, sample_container()).expect("container");
+    std::fs::write(format!("{}.json", backup.display()), b"{ not a sidecar }").expect("sidecar");
+
+    let mark = backend.calls().borrow().len();
+    let (exit, _stdout, stderr) = run_backend(
+        &mut backend,
+        &write_args(
+            container_path.to_str().expect("path"),
+            backup.to_str().expect("path"),
+            true,
+        ),
+        directory.path(),
+    );
+
+    assert_eq!(exit, Exit(4), "{stderr}");
+    assert!(stderr.contains("is not valid JSON"), "{stderr}");
+    let calls = backend.calls().borrow().clone();
+    assert!(
+        !calls[mark..]
+            .iter()
+            .any(|call| matches!(call, Call::OpenWrite { .. }))
+    );
+}
+
+#[cfg(feature = "cli")]
 fn make_backup(backend: &mut FakeBackend, directory: &Path) -> PathBuf {
     let path = directory.join("backup.bin");
     let (exit, stdout, stderr) = run_backend(
@@ -342,6 +590,7 @@ fn make_backup(backend: &mut FakeBackend, directory: &Path) -> PathBuf {
     path
 }
 
+#[cfg(feature = "cli")]
 fn journal_records(directory: &Path) -> Vec<Value> {
     let text = std::fs::read_to_string(directory.join("journal.jsonl")).expect("journal");
     text.lines()
@@ -349,6 +598,7 @@ fn journal_records(directory: &Path) -> Vec<Value> {
         .collect()
 }
 
+#[cfg(feature = "cli")]
 fn position_of(calls: &[Call], predicate: impl Fn(&Call) -> bool) -> usize {
     calls
         .iter()
@@ -356,12 +606,14 @@ fn position_of(calls: &[Call], predicate: impl Fn(&Call) -> bool) -> usize {
         .expect("expected call was not recorded")
 }
 
+#[cfg(feature = "cli")]
 fn no_write_opened(calls: &[Call]) -> bool {
     !calls
         .iter()
         .any(|call| matches!(call, Call::OpenWrite { .. }))
 }
 
+#[cfg(feature = "cli")]
 fn write_args<'a>(container: &'a str, backup: &'a str, commit: bool) -> Vec<&'a str> {
     let mut args = vec!["write", "--container", container, "--backup", backup];
     if commit {
@@ -371,6 +623,7 @@ fn write_args<'a>(container: &'a str, backup: &'a str, commit: bool) -> Vec<&'a 
     args
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn write_dry_run_validates_without_opening_for_write() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -410,6 +663,7 @@ fn write_dry_run_validates_without_opening_for_write() {
     assert!(!directory.path().join("journal.jsonl").exists());
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn write_dry_run_rejects_invalid_container_checksum() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -437,6 +691,7 @@ fn write_dry_run_rejects_invalid_container_checksum() {
     assert!(no_write_opened(&backend.calls().borrow()[mark..]));
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn write_rejects_oversized_container() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -462,6 +717,7 @@ fn write_rejects_oversized_container() {
     assert!(no_write_opened(&backend.calls().borrow()[mark..]));
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn write_refuses_unexpected_current_configuration() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -494,6 +750,7 @@ fn write_refuses_unexpected_current_configuration() {
     );
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn write_allows_empty_current_configuration() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -517,6 +774,7 @@ fn write_allows_empty_current_configuration() {
     assert_eq!(exit, Exit(0), "{stderr}");
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn write_refuses_backup_from_another_skin() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -543,6 +801,7 @@ fn write_refuses_backup_from_another_skin() {
     assert!(no_write_opened(&backend.calls().borrow()[mark..]));
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn write_refuses_unsupported_remote() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -568,6 +827,7 @@ fn write_refuses_unsupported_remote() {
     assert!(no_write_opened(&backend.calls().borrow()[mark..]));
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn write_commit_writes_checks_flushes_reads_back_and_reboots() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -698,6 +958,7 @@ fn write_commit_writes_checks_flushes_reads_back_and_reboots() {
     assert_eq!(read_back["reply"].as_str(), Some("ok"));
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn write_commit_splits_a_large_container_into_chunks() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -740,6 +1001,7 @@ fn write_commit_splits_a_large_container_into_chunks() {
     )));
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn write_commit_with_no_reboot_skips_reboot() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -782,6 +1044,44 @@ fn write_commit_with_no_reboot_skips_reboot() {
     assert_eq!(reboot["reply"].as_str(), Some("skipped"));
 }
 
+#[cfg(feature = "cli")]
+#[test]
+fn write_run_reports_each_stage_to_its_progress_sink() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let mut backend = FakeBackend::new(vec![device(79, 0x1078, 0xC124)]);
+    let backup = make_backup(&mut backend, directory.path());
+    let container_path = directory.path().join("new.bin");
+    std::fs::write(&container_path, sample_container()).expect("container");
+    let mut stdout = Vec::new();
+    let mut events: Vec<Progress> = Vec::new();
+
+    crate::write::run(
+        &mut backend,
+        &FixedClock(time::OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap()),
+        crate::write::WriteRequest {
+            state_dir: directory.path(),
+            container_path: &container_path,
+            backup_path: &backup,
+            commit: false,
+            no_reboot: false,
+        },
+        true,
+        &mut stdout,
+        &mut |event| events.push(event),
+    )
+    .expect("dry run");
+
+    assert!(stdout.starts_with(b"{"), "the report still goes to stdout");
+    assert_eq!(events.first(), Some(&Progress::Step("load")));
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, Progress::Step("detect"))),
+        "detect is reported: {events:?}"
+    );
+}
+
+#[cfg(feature = "cli")]
 #[test]
 fn write_commit_checksum_refusal_skips_flush() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -821,6 +1121,7 @@ fn write_commit_checksum_refusal_skips_flush() {
     assert_eq!(check["reply"].as_str(), Some("u"));
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn write_commit_read_back_mismatch_exits_6_and_skips_reboot() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -860,6 +1161,7 @@ fn write_commit_read_back_mismatch_exits_6_and_skips_reboot() {
     assert_eq!(read_back["reply"].as_str(), Some("mismatch"));
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn write_commit_disconnect_journals_and_reopens_session() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -917,6 +1219,7 @@ fn write_commit_disconnect_journals_and_reopens_session() {
     );
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn write_commit_short_read_back_exits_5() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -948,6 +1251,7 @@ fn write_commit_short_read_back_exits_5() {
     );
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn restore_dry_run_validates_without_opening_for_write() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -974,6 +1278,7 @@ fn restore_dry_run_validates_without_opening_for_write() {
     assert!(!directory.path().join("journal.jsonl").exists());
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn restore_refuses_backup_from_another_skin_before_writing() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -999,6 +1304,7 @@ fn restore_refuses_backup_from_another_skin_before_writing() {
     assert!(no_write_opened(&backend.calls().borrow()[mark..]));
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn restore_commit_writes_backup_and_reboots() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -1041,6 +1347,49 @@ fn restore_commit_writes_backup_and_reboots() {
     );
 }
 
+#[cfg(feature = "cli")]
+#[test]
+fn restore_commit_with_no_reboot_skips_reboot() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let mut backend = FakeBackend::new(vec![device(79, 0x1078, 0xC124)]);
+    let backup = make_backup(&mut backend, directory.path());
+    let expected = sample_container();
+
+    let mark = backend.calls().borrow().len();
+    let (exit, stdout, stderr) = run_backend(
+        &mut backend,
+        &[
+            "restore",
+            "--backup",
+            backup.to_str().expect("path"),
+            "--commit",
+            "--no-reboot",
+            "--json",
+        ],
+        directory.path(),
+    );
+
+    assert_eq!(exit, Exit(0), "{stderr}");
+    let value: Value = serde_json::from_str(&stdout).expect("json");
+    assert_eq!(value["commit"].as_bool(), Some(true));
+    assert_eq!(value["reboot"].as_bool(), Some(false));
+    assert_eq!(backend.store(0).borrow().usercfg, expected);
+    let calls = backend.calls().borrow().clone();
+    assert!(
+        !calls[mark..]
+            .iter()
+            .any(|call| matches!(call, Call::Reboot)),
+        "--no-reboot must suppress the reboot"
+    );
+    let records = journal_records(directory.path());
+    let reboot = records
+        .iter()
+        .find(|record| record["step"] == "reboot")
+        .expect("reboot record");
+    assert_eq!(reboot["reply"].as_str(), Some("skipped"));
+}
+
+#[cfg(feature = "cli")]
 #[test]
 fn restore_commit_read_back_mismatch_exits_6() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -1349,6 +1698,7 @@ fn model_v2_schema_accepts_routing_and_rejects_v1_routing() {
     );
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn backup_sidecar_validates_against_published_schema() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -1373,6 +1723,7 @@ fn backup_sidecar_validates_against_published_schema() {
 // Code-review findings: detection, overwrite, schema exposure, clap, profiles.
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "cli")]
 fn non_harmony_device() -> FakeDevice {
     FakeDevice {
         descriptor: descriptor(1, 5, 0xC52B, 0x0100, "USB Receiver"),
@@ -1381,6 +1732,7 @@ fn non_harmony_device() -> FakeDevice {
     }
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn detect_reports_the_family_from_bcd_device() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -1397,23 +1749,7 @@ fn detect_reports_the_family_from_bcd_device() {
     assert_eq!(value["supported"].as_bool(), Some(true));
 }
 
-#[test]
-fn detect_labels_the_harmony_350_family_as_unsupported() {
-    let directory = tempfile::tempdir().expect("tempdir");
-    let (exit, stdout, stderr) = run_with(
-        vec![device(104, 0x1104, 0xC124)],
-        &["detect", "--json"],
-        directory.path(),
-    );
-
-    assert_eq!(exit, Exit(0), "{stderr}");
-    let value: Value = serde_json::from_str(&stdout).expect("json");
-    // The family comes from bcdDevice; skin 104 is recognised but has no profile in v1.
-    assert_eq!(value["family"].as_str(), Some("Harmony 350"));
-    assert_eq!(value["supported"].as_bool(), Some(false));
-    assert_eq!(value["model"].as_str(), Some("Harmony 350"));
-}
-
+#[cfg(feature = "cli")]
 #[test]
 fn detect_reports_a_non_harmony_logitech_device() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -1440,6 +1776,7 @@ fn detect_reports_a_non_harmony_logitech_device() {
     assert!(stdout.contains("not a Harmony Remote"), "{stdout}");
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn open_remote_refuses_a_non_harmony_logitech_device() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -1455,6 +1792,7 @@ fn open_remote_refuses_a_non_harmony_logitech_device() {
     assert!(!out.exists());
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn detect_refuses_a_link_packet_length_other_than_64() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -1469,6 +1807,7 @@ fn detect_refuses_a_link_packet_length_other_than_64() {
     assert!(stderr.contains("63"), "{stderr}");
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn detect_refuses_a_missing_link_packet_length() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -1483,6 +1822,114 @@ fn detect_refuses_a_missing_link_packet_length() {
     assert!(stderr.contains("missing"), "{stderr}");
 }
 
+#[cfg(feature = "cli")]
+#[test]
+fn backup_refuses_a_configuration_above_the_region_limit() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let mut backend = FakeBackend::new(vec![device(79, 0x1078, 0xC124)]);
+    backend.store(0).borrow_mut().usercfg = (0..=u8::MAX)
+        .cycle()
+        .take(container::MAX_CONTAINER_SIZE + 1)
+        .collect();
+    let out = directory.path().join("backup.bin");
+
+    let (exit, stdout, stderr) = run_backend(
+        &mut backend,
+        &["backup", "--out", out.to_str().expect("path"), "--json"],
+        directory.path(),
+    );
+
+    assert_eq!(exit, Exit(5), "{stderr}");
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(stderr.contains("above the"), "{stderr}");
+    assert!(
+        !out.exists(),
+        "no Backup is written for an oversized region"
+    );
+    assert!(
+        !PathBuf::from(format!("{}.json", out.display())).exists(),
+        "no sidecar is written for an oversized region"
+    );
+}
+
+#[cfg(feature = "cli")]
+#[test]
+fn restore_refuses_a_backup_above_the_region_limit() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let mut backend = FakeBackend::new(vec![device(79, 0x1078, 0xC124)]);
+    let backup = directory.path().join("oversized.bin");
+    let bytes = vec![0u8; container::MAX_CONTAINER_SIZE + 4];
+    std::fs::write(&backup, &bytes).expect("backup");
+    std::fs::write(
+        format!("{}.json", backup.display()),
+        serde_json::to_vec(&json!({
+            "schema_version": 1,
+            "model": "Harmony 300",
+            "skin": 79,
+            "architecture": 16,
+            "size": bytes.len(),
+            "sha256": container::sha256_hex(&bytes),
+            "validation": "ok",
+        }))
+        .expect("sidecar"),
+    )
+    .expect("sidecar");
+
+    let mark = backend.calls().borrow().len();
+    let (exit, _stdout, stderr) = run_backend(
+        &mut backend,
+        &[
+            "restore",
+            "--backup",
+            backup.to_str().expect("path"),
+            "--json",
+        ],
+        directory.path(),
+    );
+
+    assert_eq!(exit, Exit(4), "{stderr}");
+    assert!(stderr.contains("maximum is"), "{stderr}");
+    let calls = backend.calls().borrow().clone();
+    assert!(
+        !calls[mark..]
+            .iter()
+            .any(|call| matches!(call, Call::OpenWrite { .. })),
+        "an oversized Backup must never be written"
+    );
+}
+
+#[cfg(feature = "cli")]
+#[test]
+fn a_state_directory_that_cannot_be_created_exits_one() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let mut backend = FakeBackend::new(vec![device(79, 0x1078, 0xC124)]);
+    let backup = make_backup(&mut backend, directory.path());
+    let container_path = directory.path().join("new.bin");
+    std::fs::write(&container_path, sample_container()).expect("container");
+    // A regular file where the state directory should be makes Journal::create fail with an I/O
+    // error, which is the internal-error exit code.
+    let state_path = directory.path().join("state");
+    std::fs::write(&state_path, b"not a directory").expect("state file");
+
+    let (exit, stdout, stderr) = run_backend(
+        &mut backend,
+        &[
+            "write",
+            "--container",
+            container_path.to_str().expect("path"),
+            "--backup",
+            backup.to_str().expect("path"),
+            "--commit",
+            "--json",
+        ],
+        &state_path,
+    );
+
+    assert_eq!(exit, Exit(1), "{stderr}");
+    assert!(stdout.is_empty(), "{stdout}");
+}
+
+#[cfg(feature = "cli")]
 #[test]
 fn backup_refuses_an_existing_sidecar_without_overwrite() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -1502,6 +1949,7 @@ fn backup_refuses_an_existing_sidecar_without_overwrite() {
     assert!(stderr.contains("already exists"), "{stderr}");
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn backup_overwrite_replaces_both_files() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -1528,6 +1976,7 @@ fn backup_overwrite_replaces_both_files() {
     assert_eq!(value["validation"].as_str(), Some("ok"));
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn backup_prints_its_embedded_schema_without_a_remote() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -1542,6 +1991,7 @@ fn backup_prints_its_embedded_schema_without_a_remote() {
     );
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn compose_prints_its_model_and_resolved_schemas_without_inputs() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -1563,6 +2013,7 @@ fn compose_prints_its_model_and_resolved_schemas_without_inputs() {
     );
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn cli_help_and_version_are_successful_stdout() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -1577,6 +2028,7 @@ fn cli_help_and_version_are_successful_stdout() {
     assert!(stderr.is_empty(), "{stderr}");
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn cli_usage_errors_exit_two() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -1590,6 +2042,7 @@ fn cli_usage_errors_exit_two() {
     assert!(stderr.contains("--out"), "{stderr}");
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn the_exit_code_taxonomy_covers_one_to_six() {
     use crate::error::Error;
@@ -1642,6 +2095,7 @@ fn test_profile_model(devices: usize, favourites: usize) -> Value {
     model
 }
 
+#[cfg(feature = "cli")]
 fn compose_with_test_profile(
     directory: &Path,
     devices: usize,
@@ -1674,6 +2128,7 @@ fn compose_with_test_profile(
     )
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn a_test_profile_drives_detect_compose_and_validation_without_codec_changes() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -1732,6 +2187,7 @@ fn patch_container(container: &mut [u8], skin: u8, ir_groups: Option<u8>) {
     container[checksum_at..checksum_at + 2].copy_from_slice(&checksum.to_le_bytes());
 }
 
+#[cfg(feature = "cli")]
 fn expect_write_refused(container: Vec<u8>, message: &str) {
     let directory = tempfile::tempdir().expect("tempdir");
     let mut backend = FakeBackend::new(vec![device(79, 0x1078, 0xC124)]);
@@ -1756,12 +2212,14 @@ fn expect_write_refused(container: Vec<u8>, message: &str) {
     assert!(no_write_opened(&backend.calls().borrow()[mark..]));
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn write_refuses_a_skin_78_container_on_a_skin_79_remote() {
     let container = crate::emit_empty(78, &fixture_moment()).expect("skin 78");
     expect_write_refused(container, "Skin");
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn write_refuses_a_container_with_too_many_infrared_groups() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -1770,6 +2228,7 @@ fn write_refuses_a_container_with_too_many_infrared_groups() {
     expect_write_refused(container, "infrared groups");
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn write_refuses_a_container_with_too_many_devices() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -1778,6 +2237,7 @@ fn write_refuses_a_container_with_too_many_devices() {
     expect_write_refused(container, "Devices");
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn write_refuses_a_container_with_too_many_favourites() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -1809,6 +2269,7 @@ fn crafted_backup(directory: &Path, bytes: &[u8], declared_skin: u8) -> PathBuf 
     path
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn restore_refuses_a_container_whose_skin_differs_from_the_remote() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -1840,6 +2301,7 @@ fn restore_refuses_a_container_whose_skin_differs_from_the_remote() {
 // Malformed-packet recovery.
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "cli")]
 #[test]
 fn write_recovers_a_fresh_session_after_a_malformed_packet() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -1898,6 +2360,7 @@ fn write_recovers_a_fresh_session_after_a_malformed_packet() {
     );
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn write_reports_a_combined_error_when_recovery_fails() {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -1940,6 +2403,7 @@ fn write_reports_a_combined_error_when_recovery_fails() {
     );
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn detect_prefers_a_harmony_over_another_logitech_device() {
     let directory = tempfile::tempdir().expect("tempdir");

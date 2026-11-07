@@ -396,6 +396,7 @@ fn inspect_without_json_prints_a_human_summary() {
     assert!(stdout.contains("Favourites: 1"));
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn inspect_print_schema_prints_the_embedded_schema_without_a_file() {
     let mut stdout = Vec::new();
@@ -424,6 +425,7 @@ fn inspect_print_schema_prints_the_embedded_schema_without_a_file() {
     assert!(schema["properties"]["schema_version"].is_object());
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn inspect_requires_a_file_without_print_schema() {
     let mut stdout = Vec::new();

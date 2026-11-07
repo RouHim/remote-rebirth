@@ -1,6 +1,6 @@
 # Remote Rebirth
 
-A GPLv3 command-line tool that identifies a Logitech Harmony 300 over USB, backs up, composes, writes, and restores its configuration without network access.
+A GPLv3 tool with a command-line interface and a desktop GUI over one shared core. It identifies a Logitech Harmony 300 over USB, backs up, composes, writes, and restores its configuration without network access.
 
 ## Language
 

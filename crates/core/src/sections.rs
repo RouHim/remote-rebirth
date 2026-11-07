@@ -106,6 +106,7 @@ pub fn start_up_table() -> Result<Piece, Error> {
 /// Each event list calls the hold list and then the empty list. None selects a key map, because the
 /// empty configuration has no device whose map could be selected; the reference documents this as
 /// the least a start-up can do.
+#[cfg(test)]
 pub fn start_up_lists() -> Result<Vec<Piece>, Error> {
     start_up_lists_with(None)
 }

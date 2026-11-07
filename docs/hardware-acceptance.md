@@ -117,6 +117,7 @@ Not covered by this run: a physical IR bench (the verification model used synthe
 four-Device/full-Favourite committed Write, and the refusal cases that need induced protocol faults.
 The write, chunked-write, Read-Back, reboot, and Restore paths were exercised on hardware.
 
-The original Configuration is preserved outside `/tmp` at
-`/home/rouven/h300-backups/2026-11-05-original.bin` with its sidecar; its SHA-256 is the original
+The original Configuration is preserved outside the repository, for example at
+`$HOME/h300-backups/<name>.bin` with its sidecar, so it is not shipped and not linkable from here;
+its SHA-256 is the original
 `d1b78d77dacf1e1c2dac124bb3b4a755d5a6d76bcc9b772e169fc73d9cbfa279`.
