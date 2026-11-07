@@ -236,7 +236,7 @@ The first shippable GUI is the end-to-end thin slice, not the full editor:
 
 - Core prerequisites: workspace split, Model v2 routing, unreferenced-Command filtering, typed operations and progress events.
 - GUI slice: Detect, Backup now, one Device created from a local Pronto/LIRC/Flipper file or inline hex, Key Map with the schematic diagram, table, command palette and volume/channel Routing, Compose, Prepare, Commit, Read-Back and Restore.
-- The IR Library downloader and browser, Favourites polish and Activity polish follow in the next slice. Local file/hex import is available in the first slice, so no library is required to prove the path.
+- The IR Library browser for a local folder is shipped; what follows in the next slice is the pinned IR Library downloader and the browser for its downloaded archive, plus Favourites polish and Activity polish. Local file/hex import is available in the first slice, so no library is required to prove the path.
 
 ## Testing and Acceptance
 

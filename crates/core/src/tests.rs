@@ -492,13 +492,15 @@ fn write_refuses_an_unverified_backup() {
 fn write_refuses_a_missing_backup() {
     let directory = tempfile::tempdir().expect("tempdir");
     let mut backend = FakeBackend::new(vec![device(79, 0x1078, 0xC124)]);
+    let container_path = directory.path().join("new.bin");
+    std::fs::write(&container_path, sample_container()).expect("container");
     let missing = directory.path().join("absent.bin");
 
     let mark = backend.calls().borrow().len();
     let (exit, stdout, stderr) = run_backend(
         &mut backend,
         &write_args(
-            missing.to_str().expect("path"),
+            container_path.to_str().expect("path"),
             missing.to_str().expect("path"),
             true,
         ),
@@ -507,6 +509,7 @@ fn write_refuses_a_missing_backup() {
 
     assert_eq!(exit, Exit(4), "{stderr}");
     assert!(stdout.is_empty(), "{stdout}");
+    assert!(stderr.contains("Backup"), "{stderr}");
     assert!(stderr.contains("cannot be read"), "{stderr}");
     let calls = backend.calls().borrow().clone();
     assert!(

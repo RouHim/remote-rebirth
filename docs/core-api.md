@@ -11,8 +11,11 @@ page is the current contract and every claim cites its source.
 
 `remote-rebirth-core` has one feature, `cli`, and it is on by default (`crates/core/Cargo.toml`).
 It adds the `run` adapter and its clap dependency. The GUI depends on the core with
-`default-features = false` (`crates/gui/Cargo.toml:18`), so the GUI surface is everything below
-except `run` and `Runtime`. The CLI turns the feature on (`crates/cli/Cargo.toml:14`).
+`default-features = false` (`crates/gui/Cargo.toml:18`). What `crates/core/src/lib.rs` re-exports is
+therefore the whole GUI-visible surface: `Clock`, `SystemClock`, `state_dir`, `Error`, `Exit`,
+`HidBackend`, `OpenRead`, `RemoteBackend`, `RemoteDescriptor`, `RemoteSelector`, `RemoteSession`,
+`Progress`, and the `model`, `profile` and `gui_api` modules. `run` and `Runtime` join that list only
+when the `cli` feature is on.
 
 ## The CLI seam
 
@@ -173,8 +176,8 @@ per-model and per-Skin facts the codecs need; no catalogue data is shipped.
 | `favourite_key` | `crates/core/src/profile.rs:372` | Scan code to positional favourite. |
 | `empty_ir_groups` | `crates/core/src/profile.rs:385` | Test builds only. IR group count used to build an empty configuration. |
 
-`HARMONY_350_TEST`, `HARMONY_350_TEST_SKINS` and `empty_ir_groups`
-(`crates/core/src/profile.rs:278`, `:287`, `:385`) exist only in test builds: the real Harmony 350's
+`HARMONY_350_TEST` (`crates/core/src/profile.rs:287`), `HARMONY_350_TEST_SKINS` (`:278`) and
+`empty_ir_groups` (`:385`) exist only in test builds: the real Harmony 350's
 skin 104 is recognised and refused, the test profile uses skin 105 so that posture stays observable,
 and no shipping command builds an empty Container.
 
@@ -207,6 +210,7 @@ Success is `Exit(0)` (`crates/core/src/cli.rs:113`).
 ```rust
 pub trait Clock: Send + Sync { fn now(&self) -> OffsetDateTime; }
 pub struct SystemClock;
+// Crate-internal: `mod clock` is private, so this is not part of the GUI surface.
 pub fn format_rfc3339(value: &OffsetDateTime) -> Result<String, Error>
 ```
 
@@ -241,6 +245,7 @@ pub trait RemoteSession {
     fn reboot(&mut self) -> Result<(), Error>;
 }
 
+// Crate-internal: `mod transport` is private, so this is not part of the GUI surface.
 pub fn read_file(session: &mut dyn RemoteSession, path: &str) -> Result<Vec<u8>, Error>
 ```
 
@@ -279,5 +284,6 @@ pub fn emit_empty(skin: u8, built_at: &OffsetDateTime) -> Result<Vec<u8>, Error>
 (`#[cfg(test)]`, `crates/core/src/lib.rs:66`), because no CLI or GUI command writes an empty
 Container.
 
-`sidecar_path` and `with_suffix` (`crates/core/src/paths.rs:4`, `:9`) are the only other public path
-helpers.
+`sidecar_path` and `with_suffix` (`crates/core/src/paths.rs:4`, `:9`) are crate-internal helpers:
+`mod paths` is private and neither is re-exported, so the GUI names `gui_api::backup_sidecar`
+instead.

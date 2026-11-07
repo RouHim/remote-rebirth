@@ -149,6 +149,37 @@ fn list_flipper_commands_matches_what_an_import_accepts() {
         "an entry without a type is not listed"
     );
 
+    // Entries an import would reject are never offered, so Compose cannot fail on a listed name.
+    let partial = directory.path().join("Partial.ir");
+    std::fs::write(
+        &partial,
+        "name: No Protocol\ntype: parsed\naddress: 00 00 00 00\ncommand: 00 00 00 00\n\
+         name: No Data\ntype: raw\nfrequency: 38000\n\
+         name: Works\ntype: raw\nfrequency: 38000\ndata: 9000 4500 560 560\n",
+    )
+    .expect("partial file");
+    let commands = list_flipper_commands(&partial).expect("a parseable file");
+    assert_eq!(
+        commands,
+        ["Works"],
+        "only commands an import accepts are listed"
+    );
+
+    // Resolution takes the first entry of a name, so a later valid duplicate must not be listed
+    // when the first one is unimportable: Compose would pick the rejected entry.
+    let duplicate = directory.path().join("Duplicate.ir");
+    std::fs::write(
+        &duplicate,
+        "name: Power\ntype: parsed\nprotocol: RC6\naddress: 00 00 00 00\ncommand: 00 00 00 00\n\
+         name: Power\ntype: raw\nfrequency: 38000\ndata: 9000 4500 560 560\n",
+    )
+    .expect("duplicate file");
+    let commands = list_flipper_commands(&duplicate).expect("a parseable file");
+    assert!(
+        commands.is_empty(),
+        "a name whose first entry is unimportable is not listed: {commands:?}"
+    );
+
     // A malformed timing word fails the whole file instead of hiding the problem.
     let malformed = directory.path().join("Malformed.ir");
     std::fs::write(

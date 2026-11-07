@@ -323,7 +323,6 @@ pub fn for_identity(architecture: Option<u8>, skin: Option<u8>) -> Option<&'stat
     })
 }
 
-/// The Model Profile whose architecture states `skin`, or the first profile whose skins include it.
 /// True when a detected firmware shares the profile's measured major.minor version.
 ///
 /// The write sequence is only verified on the measured version, so callers warn when this is
@@ -342,6 +341,7 @@ pub fn firmware_matches(profile: &ModelProfile, detected: Option<&str>) -> bool 
     }
 }
 
+/// The Model Profile whose architecture states `skin`, or the first profile whose skins include it.
 pub fn for_skin(skin: u8) -> Option<&'static ModelProfile> {
     all().find(|profile| profile.skins.iter().any(|entry| entry.skin == skin))
 }

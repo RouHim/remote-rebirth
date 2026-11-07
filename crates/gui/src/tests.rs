@@ -40,7 +40,7 @@ fn library_scan_indexes_brand_model_and_commands() {
     std::fs::create_dir_all(&brand).expect("brand dir");
     std::fs::write(
             brand.join("TV.ir"),
-            "Filetype: IR signals file\nVersion: 1\n#\nname: Power\ntype: parsed\n#\nname: Volume Up\ntype: raw\n",
+            "Filetype: IR signals file\nVersion: 1\n#\nname: Power\ntype: parsed\nprotocol: NEC\naddress: 00 00 00 00\ncommand: 00 00 00 00\n#\nname: Volume Up\ntype: raw\nfrequency: 38000\ndata: 9000 4500 560 560\n",
         )
         .expect("write library file");
     let devices = scan_library(directory.path()).expect("scan");
@@ -57,7 +57,7 @@ fn library_import_adds_all_commands_to_selected_device() {
     std::fs::create_dir_all(&brand).expect("brand dir");
     std::fs::write(
             brand.join("TV.ir"),
-            "Filetype: IR signals file\nVersion: 1\nname: Power\ntype: parsed\nname: Volume Up\ntype: raw\n",
+            "Filetype: IR signals file\nVersion: 1\nname: Power\ntype: parsed\nprotocol: NEC\naddress: 00 00 00 00\ncommand: 00 00 00 00\nname: Volume Up\ntype: raw\nfrequency: 38000\ndata: 9000 4500 560 560\n",
         )
         .expect("write library file");
     let (mut app, _) = App::at(directory.path().join("data"));
@@ -363,10 +363,18 @@ fn a_failed_write_offers_the_journal_and_a_restore() {
     std::fs::write(&backup, b"container").expect("write a backup file");
     std::fs::write(
         app.project.backups_dir.join("pre-write-1.bin.json"),
-        br#"{"validation":"ok","size":9}"#,
+        br#"{
+            "model": "Harmony 300",
+            "skin": 79,
+            "architecture": 16,
+            "size": 9,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+            "timestamp": "2026-11-05T12:00:00Z",
+            "validation": "ok"
+        }"#,
     )
     .expect("write the backup sidecar");
-    app.project.backup_path = Some(backup);
+    app.project.backup_path = Some(backup.clone());
     app.ui.advanced = true;
     app.ui.error = Some("Read-back mismatch: the remote did not store it".into());
 
@@ -376,8 +384,16 @@ fn a_failed_write_offers_the_journal_and_a_restore() {
     ui.find("Activity log").expect("the journal label is shown");
     ui.find(journal.display().to_string().as_str())
         .expect("the journal path is shown");
-    ui.find("Restore this backup")
-        .expect("a restore action is offered");
+    ui.click("Restore this backup")
+        .expect("the restore control is enabled");
+    let messages: Vec<_> = ui.into_messages().collect();
+    assert!(
+        messages.iter().any(|message| matches!(
+            message,
+            Message::UseBackup(path) if path == &backup
+        )),
+        "clicking the control offers this Backup: {messages:?}"
+    );
 }
 
 #[test]

@@ -28,9 +28,9 @@ pub(crate) fn write_file(path: &Path, bytes: &[u8]) -> Result<(), Error> {
         .create_new(true)
         .open(&temporary)
         .map_err(|error| {
-            Error::Validation(format!(
-                "{} cannot be written: {error}",
-                temporary.display()
+            Error::Io(std::io::Error::new(
+                error.kind(),
+                format!("{} cannot be written: {error}", path.display()),
             ))
         })?;
     let written = file.write_all(bytes).and_then(|()| file.sync_all());
@@ -42,6 +42,22 @@ pub(crate) fn write_file(path: &Path, bytes: &[u8]) -> Result<(), Error> {
     if let Err(error) = std::fs::rename(&temporary, path) {
         let _ = std::fs::remove_file(&temporary);
         return Err(error.into());
+    }
+    // Make the rename itself durable: the file's contents are synced, but the directory entry
+    // only survives a power loss once the parent directory is synced too. The destination has
+    // already been replaced, so this is best-effort: a directory that is write-only (or otherwise
+    // unreadable) still holds the new contents, and reporting an error would claim the old file
+    // survived when it did not.
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    if let Err(error) = std::fs::File::open(parent).and_then(|directory| directory.sync_all()) {
+        tracing::warn!(
+            path = %path.display(),
+            error = %error,
+            "wrote the file but could not sync its parent directory"
+        );
     }
     Ok(())
 }

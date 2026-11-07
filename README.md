@@ -9,7 +9,7 @@ not depend on a Logitech account or service.
 
 ## Build
 
-Requires Rust 1.88 or newer (edition 2024 plus the MSRV of the pinned dependencies).
+Requires Rust 1.90 or newer (edition 2024 plus the MSRV of the pinned dependencies).
 
 ```sh
 cargo build --release
@@ -64,8 +64,9 @@ command; the device node changes.
 
 ## Desktop GUI
 
-`cargo run -p remote-rebirth-gui` starts the desktop application. It needs a Wayland or X11 session
-with a working GPU/GL driver; the CLI is the headless surface. The GUI links the same core as the
+`cargo run -p remote-rebirth-gui` starts the desktop application. It needs a Wayland or X11 session;
+when no GPU/GL driver is available, iced falls back to software rendering. The CLI is the headless
+surface. The GUI links the same core as the
 CLI, never shells out, and contains no network client.
 
 The GUI manages an active Model at `$XDG_DATA_HOME/remote-rebirth/model.json` (falling back to
