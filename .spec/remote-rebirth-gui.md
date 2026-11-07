@@ -136,7 +136,7 @@ An owner prepares a Configuration before plugging in the Remote, or moves it to 
 - **GUI-FR-019**: The GUI MUST NOT bypass any core safety gate: verified Backup, matching model and Skin, current Configuration equal to the Backup or empty, Container size and checksum, checksum check `m`, Read-Back equality, and reboot policy.
 - **GUI-FR-020**: During a committed Write or Restore the GUI MUST show step-level progress and MUST disable Cancel once the reset or open-for-writing has been sent.
 - **GUI-FR-021**: The GUI MUST surface a failed operation's Journal path, the Backup name and a Restore action on Read-Back mismatch or protocol failure.
-- **GUI-FR-022**: The GUI MUST use one modern calm light theme, one accent colour, a neutral surface system, monospace for data values, and a schematic vector Harmony 300 diagram. Dark mode, photorealistic renders and localization are out of scope for v1.
+- **GUI-FR-022**: The GUI MUST use one calm light owner's-manual system, one accent colour, a paper-and-cloth surface system, monospace for data values, and a numbered schematic Harmony 300 diagram. Dark mode, photorealistic renders and localization are out of scope for v1.
 - **GUI-FR-023**: The GUI MUST remain usable at its minimum window size without clipped labels or unreachable controls; fixed chrome stays outside scroll regions.
 - **GUI-FR-024**: The GUI MUST be English-only in v1, with user strings isolated for later translation.
 - **GUI-FR-025**: The GUI MUST show recognised-but-unsupported models (Harmony 350, Harmony 200) and refuse Write/Restore for them; it MUST NOT expose firmware update, IR learning or long-press controls.
@@ -208,14 +208,14 @@ The v1 rule “every declared Command must be referenced” is replaced:
 ## UX and Visual Design
 
 - **Navigation**: sidebar with Remote, Devices, Key Map, Activities, Favourites, IR Library, Settings. Fixed footer: connection status, Remote identity, save state, estimated Container size.
-- **Remote page**: identity card, Backup now, Prepare Write, Restore, Journal/recovery.
-- **Devices page**: four Device Key slots with printed labels (TV, Cable/Sat, DVD, VCR/Aux); add/edit/remove; library import; command list with provenance and “not sent” badges.
-- **Key Map page**: Device selector; routing controls for volume and channel; schematic Harmony 300 diagram; mirrored table; command palette; drag-and-drop; keyboard assignment; inherited/locked routed keys.
+- **Remote page**: identity plate, stamped Backup list, the three-step update procedure, Restore, Journal/recovery, and the fore-edge phase rail.
+- **Devices page**: four Device Key bays with printed labels (TV, Cable/Sat, DVD, VCR/Aux); add/edit/remove; library import; command list with provenance and “not sent” stamps.
+- **Key Map page**: Device tabs; routing band for volume and channel; numbered schematic Harmony 300 diagram; mirrored table; command index; drag-and-drop; keyboard assignment; inherited/locked routed keys.
 - **Activities page**: one Watch TV Activity; channel Device; ordered steps with power Command, input Command and delay.
 - **Favourites page**: positional keys with channel numbers, capacity from the active Skin, inline validation.
 - **IR Library page**: source/licence/version, search, brand/model/command browsing, Add to Device, local file/folder import, inline Pronto paste, refresh.
 - **Settings page**: data paths, Backup list management, IR Library download/refresh, About/licences.
-- **Visual system**: modern calm light theme; neutral surfaces; one blue accent; monospace for scan codes, digests, paths and counts; schematic vector remote diagram; one radius scale; explicit spacing scale; full hover/pressed/disabled/focus states.
+- **Visual system**: owner's-manual paper and cloth; one oxide accent; serif headings and sans work text; monospace only for scan codes, digests, paths and counts; numbered schematic remote diagram; hairline rules instead of cards; full hover/pressed/disabled/focus states.
 - **No wizard**: forms and modals only. Prepare/Commit is a two-step action, not a wizard.
 - **Accessibility**: keyboard reachability for every action, visible focus, labelled controls, no colour-only state, minimum window size tested.
 

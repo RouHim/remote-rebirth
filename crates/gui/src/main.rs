@@ -13,15 +13,9 @@ use std::sync::{
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use iced::futures::StreamExt;
+use iced::keyboard::{Key, Modifiers, key::Named};
 use iced::task::{Straw, sipper};
-use iced::widget::{
-    Column, Row, button, checkbox, column, container, pick_list, progress_bar, row, scrollable,
-    text, text_input,
-};
-use iced::{
-    Alignment, Background, Border, Color, Element, Fill, Font, Length, Shadow, Size, Task, Theme,
-    Vector,
-};
+use iced::{Color, Element, Size, Subscription, Task, Theme};
 use remote_rebirth_core::gui_api::{self, BackupResult, DetectReport, WriteResult};
 use remote_rebirth_core::model::{
     ActivityStep, Command, Device, Favourite, IrSource, Model, Routing, SCHEMA_VERSION,
@@ -29,10 +23,21 @@ use remote_rebirth_core::model::{
 use remote_rebirth_core::{HidBackend, Progress, SystemClock, profile};
 use serde::{Deserialize, Serialize};
 
+mod theme;
+mod views;
+
 fn main() -> iced::Result {
     iced::application(App::new, App::update, App::view)
         .title("Remote Rebirth")
         .theme(App::theme)
+        .subscription(App::subscription)
+        .font(include_bytes!("../assets/fonts/PublicSans-Regular.ttf").as_slice())
+        .font(include_bytes!("../assets/fonts/PublicSans-Medium.ttf").as_slice())
+        .font(include_bytes!("../assets/fonts/PublicSans-SemiBold.ttf").as_slice())
+        .font(include_bytes!("../assets/fonts/PublicSans-Bold.ttf").as_slice())
+        .font(include_bytes!("../assets/fonts/SourceSerif4-SemiBold.ttf").as_slice())
+        .font(include_bytes!("../assets/fonts/SplineSansMono-Regular.ttf").as_slice())
+        .font(include_bytes!("../assets/fonts/SplineSansMono-Medium.ttf").as_slice())
         .window(iced::window::Settings {
             size: Size::new(1240.0, 820.0),
             min_size: Some(Size::new(1040.0, 680.0)),
@@ -49,35 +54,23 @@ enum PreparedKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    Detect,
+    Backup,
+    Prepare,
+    Commit,
+    ReadBack,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Page {
     Remote,
     Devices,
     KeyMap,
     Activities,
     Favourites,
+    Library,
     Settings,
-}
-
-impl Page {
-    const ALL: [Page; 6] = [
-        Page::Remote,
-        Page::Devices,
-        Page::KeyMap,
-        Page::Activities,
-        Page::Favourites,
-        Page::Settings,
-    ];
-
-    fn title(self) -> &'static str {
-        match self {
-            Page::Remote => "Remote",
-            Page::Devices => "My Devices",
-            Page::KeyMap => "Buttons",
-            Page::Activities => "Watch TV",
-            Page::Favourites => "Favourites",
-            Page::Settings => "Settings",
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -94,6 +87,7 @@ enum OpDone {
 #[derive(Debug, Clone)]
 enum Message {
     Page(Page),
+    Shortcut(Key, Modifiers),
     Detect,
     Backup,
     Compose,
@@ -105,7 +99,6 @@ enum Message {
     Done(Result<OpDone, String>),
     Cancel,
     SelectDevice(usize),
-    SelectDeviceNamed(String),
     NewDeviceName(String),
     NewDeviceKey(u8),
     AddDevice,
@@ -116,6 +109,7 @@ enum Message {
     ClearKey,
     CommandFilter(String),
     AssignCommand(String),
+    AssignFirstCommand,
     NewCommandName(String),
     NewCommandFormat(String),
     NewCommandFile(String),
@@ -145,6 +139,11 @@ enum Message {
     AddFavourite,
     FavouriteChannel(usize, String),
     DeleteFavourite(usize),
+    LibraryPath(String),
+    ScanLibrary,
+    LibrarySearch(String),
+    SelectLibraryDevice(usize),
+    AddLibraryDevice,
     RestorePath(String),
     Save,
     Reload,
@@ -155,6 +154,14 @@ enum Message {
     RefreshBackups,
     DeleteBackup(PathBuf),
     DismissError,
+}
+
+#[derive(Debug, Clone)]
+struct LibraryDevice {
+    brand: String,
+    model: String,
+    path: PathBuf,
+    commands: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -192,10 +199,12 @@ struct GuiState {
     reboot: bool,
     #[serde(default)]
     advanced: bool,
+    #[serde(default)]
+    library_dir: Option<String>,
 }
 
 fn default_page() -> u8 {
-    0
+    2
 }
 
 fn default_reboot() -> bool {
@@ -205,11 +214,12 @@ fn default_reboot() -> bool {
 impl Default for GuiState {
     fn default() -> Self {
         Self {
-            page: 0,
+            page: 2,
             selected_device: 0,
             selected_key: None,
             reboot: true,
             advanced: false,
+            library_dir: None,
         }
     }
 }
@@ -235,6 +245,12 @@ struct App {
     activity_input: String,
     activity_delay: String,
     new_favourite_channel: String,
+    library_dir: String,
+    library: Vec<LibraryDevice>,
+    library_search: String,
+    library_selected: Option<usize>,
+    library_status: String,
+    library_error: Option<String>,
     backup_path: Option<PathBuf>,
     backups: Vec<PathBuf>,
     container_size: Option<u64>,
@@ -251,6 +267,7 @@ struct App {
     progress: Option<(String, f32)>,
     last_prepare: Option<WriteResult>,
     prepared_kind: Option<PreparedKind>,
+    phase: Phase,
 }
 
 impl App {
@@ -312,6 +329,18 @@ impl App {
             }
         };
         let backups = list_backups(&backups_dir);
+        let library_dir = gui_state
+            .library_dir
+            .as_deref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| data_dir.join("ir-library"));
+        let library = scan_library(&library_dir).unwrap_or_default();
+        let library_status = if library.is_empty() {
+            "No local IR Library yet. Choose a folder and Scan.".to_string()
+        } else {
+            String::new()
+        };
+        let library_selected = (!library.is_empty()).then_some(0);
         let selected_device = gui_state
             .selected_device
             .min(model.devices.len().saturating_sub(1));
@@ -326,8 +355,14 @@ impl App {
             2 => Page::KeyMap,
             3 => Page::Activities,
             4 => Page::Favourites,
-            5 => Page::Settings,
+            5 => Page::Library,
+            6 => Page::Settings,
             _ => Page::Remote,
+        };
+        let page = if model.devices.is_empty() {
+            Page::Remote
+        } else {
+            page
         };
         (
             Self {
@@ -347,10 +382,16 @@ impl App {
                 new_device_key: 1,
                 new_command: CommandForm::default(),
                 activity_device,
-                activity_power: "power".into(),
-                activity_input: "input".into(),
+                activity_power: String::new(),
+                activity_input: String::new(),
                 activity_delay: "500".into(),
                 new_favourite_channel: String::new(),
+                library_dir: library_dir.display().to_string(),
+                library,
+                library_search: String::new(),
+                library_selected,
+                library_status,
+                library_error: None,
                 backup_path: None,
                 backups,
                 container_size: None,
@@ -367,6 +408,7 @@ impl App {
                 progress: None,
                 last_prepare: None,
                 prepared_kind: None,
+                phase: Phase::Detect,
             },
             Task::none(),
         )
@@ -376,14 +418,23 @@ impl App {
         Theme::custom(
             "Remote Rebirth",
             iced::theme::Palette {
-                background: Color::from_rgb(0.965, 0.969, 0.976),
-                text: Color::from_rgb(0.105, 0.125, 0.155),
-                primary: Color::from_rgb(0.145, 0.365, 0.705),
-                success: Color::from_rgb(0.135, 0.545, 0.345),
-                warning: Color::from_rgb(0.760, 0.500, 0.105),
-                danger: Color::from_rgb(0.760, 0.205, 0.205),
+                background: theme::PAPER,
+                text: theme::INK,
+                primary: theme::OXIDE,
+                success: theme::GRASS,
+                warning: Color::from_rgb8(0xA8, 0x62, 0x2A),
+                danger: Color::from_rgb8(0x8E, 0x3B, 0x32),
             },
         )
+    }
+
+    fn subscription(&self) -> Subscription<Message> {
+        iced::keyboard::listen().filter_map(|event| match event {
+            iced::keyboard::Event::KeyPressed { key, modifiers, .. } => {
+                Some(Message::Shortcut(key, modifiers))
+            }
+            _ => None,
+        })
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -395,6 +446,7 @@ impl App {
             return Task::none();
         }
         match message {
+            Message::Shortcut(key, modifiers) => self.shortcut(key, modifiers),
             Message::Page(page) => {
                 self.page = page;
                 self.save_gui_state();
@@ -612,19 +664,6 @@ impl App {
                 }
                 Task::none()
             }
-            Message::SelectDeviceNamed(name) => {
-                if let Some(index) = self
-                    .model
-                    .devices
-                    .iter()
-                    .position(|device| device.name == name)
-                {
-                    self.selected_device = index;
-                    self.selected_key = None;
-                    self.sync_device_name_draft();
-                }
-                Task::none()
-            }
             Message::NewDeviceName(name) => {
                 self.new_device_name = name;
                 Task::none()
@@ -770,6 +809,7 @@ impl App {
                 self.command_filter = filter;
                 Task::none()
             }
+            Message::AssignFirstCommand => self.assign_first_command(),
             Message::AssignCommand(command) => {
                 if let Some(key) = self.selected_key.clone() {
                     let routed = self
@@ -872,6 +912,8 @@ impl App {
             }
             Message::ActivityDevice(name) => {
                 self.activity_device = name;
+                self.activity_power.clear();
+                self.activity_input.clear();
                 Task::none()
             }
             Message::ActivityPower(value) => {
@@ -992,6 +1034,86 @@ impl App {
                     }
                     self.persist();
                 }
+                Task::none()
+            }
+            Message::LibraryPath(path) => {
+                self.library_dir = path;
+                Task::none()
+            }
+            Message::ScanLibrary => {
+                match scan_library(Path::new(&self.library_dir)) {
+                    Ok(devices) => {
+                        self.library_status = if devices.is_empty() {
+                            "No .ir files with named commands found.".to_string()
+                        } else {
+                            "Scan complete.".to_string()
+                        };
+                        self.library_selected = (!devices.is_empty()).then_some(0);
+                        self.library = devices;
+                        self.library_error = None;
+                    }
+                    Err(error) => {
+                        self.library_error = Some(error);
+                    }
+                }
+                Task::none()
+            }
+            Message::LibrarySearch(search) => {
+                self.library_search = search;
+                Task::none()
+            }
+            Message::SelectLibraryDevice(index) => {
+                if index < self.library.len() {
+                    self.library_selected = Some(index);
+                }
+                Task::none()
+            }
+            Message::AddLibraryDevice => {
+                let Some(source) = self
+                    .library_selected
+                    .and_then(|index| self.library.get(index))
+                    .cloned()
+                else {
+                    self.library_error = Some("Choose a library device first.".into());
+                    return Task::none();
+                };
+                if self.model.devices.is_empty() {
+                    self.library_error = Some("Choose a device on My Devices first.".into());
+                    return Task::none();
+                }
+                let device_index = self
+                    .selected_device
+                    .min(self.model.devices.len().saturating_sub(1));
+                let target_name = self.model.devices[device_index].name.clone();
+                let mut added = 0;
+                let mut skipped = 0;
+                for name in &source.commands {
+                    let target = &mut self.model.devices[device_index];
+                    if target.commands.contains_key(name) {
+                        skipped += 1;
+                        continue;
+                    }
+                    target.commands.insert(
+                        name.clone(),
+                        Command {
+                            source: IrSource {
+                                format: "flipper".into(),
+                                file: Some(source.path.clone()),
+                                hex: None,
+                                remote: None,
+                                button: Some(name.clone()),
+                                command: None,
+                            },
+                            sends: None,
+                        },
+                    );
+                    added += 1;
+                }
+                self.persist();
+                self.library_status = format!(
+                    "Added {added} command(s) to {target_name}; {skipped} already present."
+                );
+                self.library_error = None;
                 Task::none()
             }
             Message::RestorePath(path) => {
@@ -1143,6 +1265,137 @@ impl App {
         }
     }
 
+    fn shortcut(&mut self, key: Key, modifiers: Modifiers) -> Task<Message> {
+        let key = key.as_ref();
+
+        if modifiers.control() && modifiers.alt() {
+            match key {
+                Key::Named(Named::ArrowLeft) => self.select_relative_device(-1),
+                Key::Named(Named::ArrowRight) => self.select_relative_device(1),
+                Key::Named(Named::ArrowUp) => self.select_relative_key(-1),
+                Key::Named(Named::ArrowDown) => self.select_relative_key(1),
+                Key::Named(Named::Backspace) => {
+                    self.selected_key = None;
+                    self.save_gui_state();
+                }
+                _ => {}
+            }
+            return Task::none();
+        }
+
+        if modifiers.control() {
+            match key {
+                Key::Character("1") => self.set_page(Page::Remote),
+                Key::Character("2") => self.set_page(Page::Devices),
+                Key::Character("3") => self.set_page(Page::KeyMap),
+                Key::Character("4") => self.set_page(Page::Activities),
+                Key::Character("5") => self.set_page(Page::Favourites),
+                Key::Character("6") => self.set_page(Page::Library),
+                Key::Character("7") => self.set_page(Page::Settings),
+                Key::Character("b") | Key::Character("B") => {
+                    return self.update(Message::Backup);
+                }
+                Key::Character("r") | Key::Character("R") => {
+                    if self.validation().is_none() {
+                        return self.update(Message::PrepareWrite);
+                    }
+                }
+                Key::Character("f") | Key::Character("F") => {
+                    return self.update(Message::Detect);
+                }
+                Key::Named(Named::Enter) => {
+                    if self.page == Page::KeyMap {
+                        return self.assign_first_command();
+                    }
+                }
+                Key::Named(Named::PageUp) => self.cycle_page(-1),
+                Key::Named(Named::PageDown) => self.cycle_page(1),
+                _ => {}
+            }
+            return Task::none();
+        }
+
+        if matches!(key, Key::Named(Named::Escape))
+            && self.error.take().is_none()
+            && self.selected_key.take().is_some()
+        {
+            self.save_gui_state();
+        }
+        Task::none()
+    }
+
+    fn set_page(&mut self, page: Page) {
+        self.page = page;
+        self.save_gui_state();
+    }
+
+    fn cycle_page(&mut self, delta: isize) {
+        const PAGES: [Page; 7] = [
+            Page::Remote,
+            Page::Devices,
+            Page::KeyMap,
+            Page::Activities,
+            Page::Favourites,
+            Page::Library,
+            Page::Settings,
+        ];
+        let index = PAGES
+            .iter()
+            .position(|page| *page == self.page)
+            .unwrap_or(0);
+        let next = (index as isize + delta).rem_euclid(PAGES.len() as isize) as usize;
+        self.set_page(PAGES[next]);
+    }
+
+    fn select_relative_device(&mut self, delta: isize) {
+        if self.model.devices.is_empty() {
+            return;
+        }
+        let len = self.model.devices.len() as isize;
+        let next = (self.selected_device as isize + delta).rem_euclid(len) as usize;
+        self.selected_device = next;
+        self.selected_key = None;
+        self.sync_device_name_draft();
+        self.save_gui_state();
+    }
+
+    fn select_relative_key(&mut self, delta: isize) {
+        let keys: Vec<&str> = profile::HARMONY_300
+            .key_layout
+            .iter()
+            .map(|binding| binding.name)
+            .collect();
+        if keys.is_empty() {
+            return;
+        }
+        let current = self
+            .selected_key
+            .as_deref()
+            .and_then(|selected| keys.iter().position(|key| *key == selected))
+            .unwrap_or(0) as isize;
+        let next = (current + delta).rem_euclid(keys.len() as isize) as usize;
+        self.selected_key = Some(keys[next].to_string());
+        self.save_gui_state();
+    }
+
+    fn assign_first_command(&mut self) -> Task<Message> {
+        if self.selected_key.is_none() {
+            return Task::none();
+        }
+        let filter = self.command_filter.to_lowercase();
+        let command = self.selected_device().and_then(|device| {
+            device
+                .commands
+                .keys()
+                .find(|name| filter.is_empty() || name.to_lowercase().contains(&filter))
+                .cloned()
+        });
+        match command {
+            Some(command) => self.update(Message::AssignCommand(command)),
+            None => Task::none(),
+        }
+    }
+
     fn begin(&mut self, status: &str) {
         self.busy = true;
         self.committing = false;
@@ -1150,6 +1403,13 @@ impl App {
         self.error = None;
         self.progress = Some((status.to_string(), 0.0));
         self.status = status.to_string();
+        self.phase = match status {
+            "Detecting the Remote" => Phase::Detect,
+            "Backing up the Remote" => Phase::Backup,
+            "Composing" | "Preparing a Write" | "Preparing a Restore" => Phase::Prepare,
+            "Writing to the Remote" | "Restoring the Remote" => Phase::Commit,
+            _ => self.phase,
+        };
     }
 
     fn finish(&mut self, done: OpDone) {
@@ -1179,12 +1439,22 @@ impl App {
                 } else {
                     format!("{} connected — not supported", report.model)
                 };
+                self.phase = if report.supported {
+                    if self.backups.is_empty() {
+                        Phase::Backup
+                    } else {
+                        Phase::Prepare
+                    }
+                } else {
+                    Phase::Detect
+                };
                 self.remote = Some(report);
             }
             OpDone::BackedUp(report) => {
                 self.backup_path = Some(report.container.clone());
                 self.prepared_kind = None;
                 self.last_prepare = None;
+                self.phase = Phase::Prepare;
                 self.refresh_backups();
                 self.status = if self.advanced {
                     format!(
@@ -1201,6 +1471,7 @@ impl App {
                 self.container_size = Some(report.size);
                 self.prepared_kind = None;
                 self.last_prepare = None;
+                self.phase = Phase::Prepare;
                 self.status = if self.advanced {
                     let mut status = format!(
                         "Setup checked — {} bytes, sha256 {}, {} device(s)",
@@ -1221,6 +1492,7 @@ impl App {
                 self.refresh_backups();
                 self.last_prepare = Some(report.clone());
                 self.prepared_kind = Some(PreparedKind::Write);
+                self.phase = Phase::Commit;
                 self.page = Page::Remote;
                 self.status = if self.advanced {
                     format!(
@@ -1237,6 +1509,7 @@ impl App {
             OpDone::Committed(report) => {
                 self.last_prepare = None;
                 self.prepared_kind = None;
+                self.phase = Phase::ReadBack;
                 self.container_size = Some(report.bytes as u64);
                 self.status = if self.advanced {
                     format!(
@@ -1255,6 +1528,7 @@ impl App {
             OpDone::RestorePrepared(report) => {
                 self.last_prepare = Some(report.clone());
                 self.prepared_kind = Some(PreparedKind::Restore);
+                self.phase = Phase::Commit;
                 self.status = if self.advanced {
                     format!(
                         "Ready to restore — {} bytes, {} chunk(s)",
@@ -1267,6 +1541,7 @@ impl App {
             OpDone::Restored(report) => {
                 self.last_prepare = None;
                 self.prepared_kind = None;
+                self.phase = Phase::ReadBack;
                 self.container_size = Some(report.bytes as u64);
                 self.status = if self.advanced {
                     format!(
@@ -1293,12 +1568,14 @@ impl App {
                 Page::KeyMap => 2,
                 Page::Activities => 3,
                 Page::Favourites => 4,
-                Page::Settings => 5,
+                Page::Library => 5,
+                Page::Settings => 6,
             },
             selected_device: self.selected_device,
             selected_key: self.selected_key.clone(),
             reboot: self.reboot,
             advanced: self.advanced,
+            library_dir: Some(self.library_dir.clone()),
         };
         if let Ok(bytes) = serde_json::to_vec_pretty(&state) {
             let _ = std::fs::write(&self.gui_path, bytes);
@@ -1353,10 +1630,6 @@ impl App {
             .iter()
             .map(|device| device.name.clone())
             .collect()
-    }
-
-    fn selected_device_name(&self) -> Option<String> {
-        self.selected_device().map(|device| device.name.clone())
     }
 
     /// Keep the in-progress Device name text of the selected row in step with the Model,
@@ -1479,930 +1752,7 @@ impl App {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let sidebar = self.view_sidebar();
-        let content = match self.page {
-            Page::Remote => self.view_remote(),
-            Page::Devices => self.view_devices(),
-            Page::KeyMap => self.view_keymap(),
-            Page::Activities => self.view_activities(),
-            Page::Favourites => self.view_favourites(),
-            Page::Settings => self.view_settings(),
-        };
-        let body = row![
-            sidebar,
-            scrollable(container(content).padding(24).width(Fill)).width(Fill)
-        ]
-        .height(Fill);
-        let footer = self.view_footer();
-        column![body, footer].height(Fill).into()
-    }
-
-    fn view_sidebar(&self) -> Element<'_, Message> {
-        let mut items: Vec<Element<'_, Message>> = vec![
-            text("Remote Rebirth").size(22).font(Font::MONOSPACE).into(),
-            text("Harmony 300").size(12).into(),
-        ];
-        for page in Page::ALL {
-            let selected = page == self.page;
-            let mut item = button(text(page.title()).size(15))
-                .width(Fill)
-                .padding([10, 12]);
-            if !self.busy {
-                item = item.on_press(Message::Page(page));
-            }
-            if selected {
-                item = item.style(button::primary);
-            } else {
-                item = item.style(button::secondary);
-            }
-            items.push(item.into());
-        }
-        items.push(iced::widget::Space::new().height(Length::Fill).into());
-        container(Column::with_children(items).spacing(8))
-            .width(Length::Fixed(220.0))
-            .height(Fill)
-            .padding(16)
-            .style(sidebar_style)
-            .into()
-    }
-
-    fn view_footer(&self) -> Element<'_, Message> {
-        let identity = match &self.remote {
-            Some(remote) if self.advanced => format!(
-                "{} · Skin {} · firmware {} · {}",
-                remote.model,
-                plain_number(remote.skin),
-                remote.firmware_version.as_deref().unwrap_or("?"),
-                remote.usb.product.as_deref().unwrap_or("USB")
-            ),
-            Some(remote) => format!("{} connected", remote.model),
-            None => "No remote connected".to_string(),
-        };
-        let validation = match (self.advanced, self.validation()) {
-            (true, Some(error)) => error,
-            (false, Some(_)) => "Setup incomplete".to_string(),
-            (_, None) => "Ready".to_string(),
-        };
-        let saved = if self.saved {
-            "All changes saved"
-        } else {
-            "Unsaved changes"
-        };
-        let container_state = if self.advanced {
-            self.container_size
-                .map(|size| format!(" · {} B", size))
-                .unwrap_or_else(|| " · not checked".into())
-        } else {
-            String::new()
-        };
-        let mut status = row![
-            text(identity).size(12),
-            iced::widget::Space::new().width(Length::Fill),
-            text(format!("{saved}{container_state}")).size(12),
-            text(validation).size(12),
-        ]
-        .spacing(16)
-        .align_y(Alignment::Center);
-        if let Some((label, fraction)) = &self.progress {
-            status = status.push(
-                container(progress_bar(0.0..=1.0, *fraction).girth(6.0))
-                    .width(Length::Fixed(160.0)),
-            );
-            status = status.push(text(label).size(12));
-        }
-        if self.busy && self.committing {
-            status = status.push(text("Commit in progress — Cancel disabled").size(12));
-        } else if self.busy {
-            status = status.push(
-                button("Cancel")
-                    .on_press(Message::Cancel)
-                    .style(button::danger),
-            );
-        }
-        container(status)
-            .padding([8, 16])
-            .width(Fill)
-            .style(footer_style)
-            .into()
-    }
-
-    fn view_remote(&self) -> Element<'_, Message> {
-        let mut content: Vec<Element<'_, Message>> = vec![
-            text("Remote").size(28).into(),
-            text(&self.status).size(13).into(),
-        ];
-        if let Some(error) = &self.error {
-            content.push(error_banner(error, self.advanced));
-            let mut recovery: Vec<Element<'_, Message>> = vec![
-                text("If something goes wrong, restore your last backup.")
-                    .size(13)
-                    .into(),
-            ];
-            if self.advanced {
-                let journal = remote_rebirth_core::state_dir()
-                    .join("journal.jsonl")
-                    .display()
-                    .to_string();
-                let backup = self
-                    .backup_path
-                    .as_ref()
-                    .map(|path| path.display().to_string())
-                    .unwrap_or_else(|| "No backup saved in this session.".into());
-                recovery.push(data_line("Activity log", &journal));
-                recovery.push(data_line("Backup", &backup));
-            }
-            if let Some(path) = &self.backup_path {
-                recovery.push(
-                    button("Restore this backup")
-                        .on_press(Message::UseBackup(path.clone()))
-                        .style(button::secondary)
-                        .into(),
-                );
-            }
-            content.push(card(
-                "Recovery",
-                Column::with_children(recovery).spacing(6).into(),
-            ));
-        }
-        let identity = match &self.remote {
-            Some(remote) if self.advanced => Column::with_children(vec![
-                data_line("Model", &remote.model),
-                data_line("Family", remote.family.unwrap_or("unknown")),
-                data_line("Architecture", &plain_number(remote.architecture)),
-                data_line("Skin", &plain_number(remote.skin)),
-                data_line(
-                    "Firmware",
-                    remote.firmware_version.as_deref().unwrap_or("unknown"),
-                ),
-                data_line(
-                    "Hardware",
-                    remote.hardware_version.as_deref().unwrap_or("unknown"),
-                ),
-                data_line("GUID", remote.guid.as_deref().unwrap_or("unknown")),
-                data_line("Serial", remote.serial.as_deref().unwrap_or("unknown")),
-                data_line(
-                    "USB",
-                    &format!(
-                        "{} · {:04X}:{:04X} · bus {} address {}",
-                        remote.usb.product.as_deref().unwrap_or("Logitech"),
-                        remote.usb.vendor_id,
-                        remote.usb.product_id,
-                        remote.usb.bus,
-                        remote.usb.address
-                    ),
-                ),
-            ])
-            .spacing(6)
-            .into(),
-            Some(remote) => Column::with_children(vec![
-                text(&remote.model).size(20).into(),
-                data_line(
-                    "Firmware",
-                    remote.firmware_version.as_deref().unwrap_or("unknown"),
-                ),
-                text("Connected and ready.").size(13).into(),
-            ])
-            .spacing(6)
-            .into(),
-            None => text("Connect the Harmony 300 with the USB cable, then choose Find remote.")
-                .size(14)
-                .into(),
-        };
-        content.push(card(
-            if self.advanced {
-                "Remote details"
-            } else {
-                "Remote"
-            },
-            identity,
-        ));
-        if let Some(remote) = &self.remote
-            && let Some(skin) = remote.skin
-            && skin != self.model.skin
-        {
-            let version_message: Element<'_, Message> = if self.advanced {
-                text(format!(
-                    "The connected remote reports Skin {skin}; the setup uses Skin {}.",
-                    self.model.skin
-                ))
-                .size(13)
-                .into()
-            } else {
-                text("This setup was made for a different remote version.")
-                    .size(13)
-                    .into()
-            };
-            content.push(card(
-                "Remote version",
-                column![
-                    version_message,
-                    button("Use the connected remote's version")
-                        .on_press(Message::UseDetectedSkin(skin))
-                        .style(button::primary),
-                ]
-                .spacing(8)
-                .into(),
-            ));
-        }
-        let mut backup_rows: Vec<Element<'_, Message>> = Vec::new();
-        for (index, path) in self.backups.iter().take(6).enumerate() {
-            backup_rows.push(
-                row![
-                    text(format!("Backup {}", index + 1)).size(12),
-                    text(backup_detail(path, self.advanced)).size(11),
-                    iced::widget::Space::new().width(Length::Fill),
-                    button("Use for restore")
-                        .on_press(Message::UseBackup(path.clone()))
-                        .style(button::secondary),
-                    button("Remove")
-                        .on_press(Message::DeleteBackup(path.clone()))
-                        .style(button::secondary),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center)
-                .into(),
-            );
-        }
-        let mut backup_content: Vec<Element<'_, Message>> = vec![
-            text("Save the remote's current setup before changing anything.")
-                .size(13)
-                .into(),
-            row![
-                action("Find remote", Message::Detect, self.busy),
-                action("Save backup", Message::Backup, self.busy),
-                action("Refresh", Message::RefreshBackups, self.busy),
-            ]
-            .spacing(8)
-            .into(),
-        ];
-        if self.advanced
-            && let Some(path) = &self.backup_path
-        {
-            backup_content.push(data_line("Current backup", &path.display().to_string()));
-        }
-        if backup_rows.is_empty() {
-            let empty: Element<'_, Message> = text("No backups saved yet.").size(12).into();
-            backup_content.push(empty);
-        } else {
-            backup_content.push(Column::with_children(backup_rows).spacing(4).into());
-        }
-        content.push(card(
-            "Backup",
-            Column::with_children(backup_content).spacing(10).into(),
-        ));
-        let prepared = self
-            .last_prepare
-            .as_ref()
-            .filter(|_| self.prepared_kind == Some(PreparedKind::Write))
-            .map(|report| {
-                if self.advanced {
-                    format!(
-                        "Ready to update — {} bytes, {} chunk(s), {} data packet(s), backup {}, reboot {}",
-                        report.bytes,
-                        report.chunks,
-                        report.data_packets,
-                        short_digest(&report.backup_sha256),
-                        if report.reboot { "yes" } else { "no" }
-                    )
-                } else {
-                    "Ready to update. A backup was saved first.".into()
-                }
-            });
-        let invalid = self.validation().is_some();
-        content.push(card(
-            "Update remote",
-            column![
-                text(prepared.unwrap_or_else(|| {
-                    "Check the new setup, then write it to the remote. A backup is saved first."
-                        .into()
-                }))
-                .size(13),
-                text(match &self.remote {
-                    Some(remote) => format!("Remote: {}", remote.model),
-                    None => "Connect the remote before updating it.".into(),
-                })
-                .size(12),
-                checkbox(self.reboot)
-                    .label("Restart remote after update")
-                    .on_toggle(Message::Reboot),
-                row![
-                    action("Check setup", Message::Compose, self.busy || invalid),
-                    action("Review update", Message::PrepareWrite, self.busy || invalid),
-                    action(
-                        "Update remote",
-                        Message::CommitWrite,
-                        self.busy || invalid || self.prepared_kind != Some(PreparedKind::Write)
-                    ),
-                ]
-                .spacing(8),
-            ]
-            .spacing(10)
-            .into(),
-        ));
-        let mut restore_content: Vec<Element<'_, Message>> = vec![
-            text("Put a saved backup back on the remote.")
-                .size(13)
-                .into(),
-        ];
-        if self.advanced {
-            restore_content.push(
-                text_input("Path to backup file", &self.restore_path)
-                    .on_input(Message::RestorePath)
-                    .width(Fill)
-                    .into(),
-            );
-        } else if self.restore_path.trim().is_empty() {
-            restore_content.push(
-                text("Choose a backup from the list above first.")
-                    .size(12)
-                    .into(),
-            );
-        }
-        restore_content.push(
-            row![
-                action("Review restore", Message::PrepareRestore, self.busy),
-                action(
-                    "Restore remote",
-                    Message::CommitRestore,
-                    self.busy || self.prepared_kind != Some(PreparedKind::Restore)
-                ),
-            ]
-            .spacing(8)
-            .into(),
-        );
-        content.push(card(
-            "Restore a backup",
-            Column::with_children(restore_content).spacing(10).into(),
-        ));
-        Column::with_children(content).spacing(16).into()
-    }
-
-    fn view_devices(&self) -> Element<'_, Message> {
-        let mut content: Vec<Element<'_, Message>> = vec![text("My Devices").size(28).into()];
-        if let Some(error) = &self.error {
-            content.push(error_banner(error, self.advanced));
-        }
-        let mut devices: Vec<Element<'_, Message>> = Vec::new();
-        for (index, device) in self.model.devices.iter().enumerate() {
-            let selected = index == self.selected_device;
-            let name_text = match &self.device_name_draft {
-                Some((draft_index, draft)) if *draft_index == index => draft.clone(),
-                _ => device.name.clone(),
-            };
-            let mut select = button(text(if selected { "Selected" } else { "Select" }).size(14))
-                .padding([8, 10]);
-            if !self.busy {
-                select = select.on_press(Message::SelectDevice(index));
-            }
-            if selected {
-                select = select.style(button::primary);
-            } else {
-                select = select.style(button::secondary);
-            }
-            devices.push(
-                row![
-                    text_input("Device name", &name_text)
-                        .on_input(move |name| Message::DeviceName(index, name))
-                        .width(Length::Fixed(190.0)),
-                    pick_list(
-                        device_key_labels(),
-                        Some(device_key_label(device.device_key)),
-                        move |label| Message::DeviceKey(index, device_key_from_label(&label))
-                    ),
-                    text(format!(
-                        "{} command{}",
-                        device.commands.len(),
-                        if device.commands.len() == 1 { "" } else { "s" }
-                    ))
-                    .size(12),
-                    select,
-                    button("Remove")
-                        .on_press_maybe((!self.busy).then_some(Message::DeleteDevice(index)))
-                        .style(button::secondary),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center)
-                .into(),
-            );
-        }
-        content.push(card(
-            "My devices",
-            if devices.is_empty() {
-                text("No Devices yet.").size(14).into()
-            } else {
-                Column::with_children(devices).spacing(6).into()
-            },
-        ));
-        content.push(card(
-            "Add a device",
-            column![
-                text_input("Name, for example TV", &self.new_device_name)
-                    .on_input(Message::NewDeviceName)
-                    .width(Fill),
-                row![
-                    pick_list(
-                        device_key_labels(),
-                        Some(device_key_label(self.new_device_key)),
-                        |label| Message::NewDeviceKey(device_key_from_label(&label))
-                    ),
-                    action("Add device", Message::AddDevice, self.busy),
-                ]
-                .spacing(8),
-            ]
-            .spacing(10)
-            .into(),
-        ));
-        if let Some(device) = self.selected_device() {
-            let referenced = remote_rebirth_core::model::referenced_commands(&self.model);
-            let mut commands: Vec<Element<'_, Message>> = Vec::new();
-            for (name, command) in &device.commands {
-                let sent = referenced.contains(&(device.name.clone(), name.clone()));
-                let source = format!(
-                    "{} {}",
-                    command.source.format,
-                    command
-                        .source
-                        .file
-                        .as_ref()
-                        .map(|path| path.display().to_string())
-                        .or_else(|| command.source.hex.as_ref().map(|_| "inline hex".into()))
-                        .unwrap_or_default()
-                );
-                let mut row = row![text(humanize(name)).size(14)]
-                    .spacing(8)
-                    .align_y(Alignment::Center);
-                if !sent {
-                    row = row.push(text("Unused").size(11));
-                }
-                row = row.push(iced::widget::Space::new().width(Length::Fill));
-                if self.advanced {
-                    row = row.push(text(source).size(11).font(Font::MONOSPACE));
-                }
-                row = row.push(
-                    button("Remove")
-                        .on_press_maybe(
-                            (!self.busy).then_some(Message::DeleteCommand(name.clone())),
-                        )
-                        .style(button::secondary),
-                );
-                commands.push(row.into());
-            }
-            content.push(card(
-                format!("Commands for {}", device.name),
-                if commands.is_empty() {
-                    text("No commands yet. Add at least one.").size(14).into()
-                } else {
-                    Column::with_children(commands).spacing(6).into()
-                },
-            ));
-        }
-        content.push(card(
-            "Add a command",
-            column![
-                text_input("Name, for example Power", &self.new_command.name)
-                    .on_input(Message::NewCommandName)
-                    .width(Fill),
-                row![
-                    pick_list(
-                        command_formats(),
-                        Some(command_format_label(&self.new_command.format)),
-                        |label| Message::NewCommandFormat(command_format_from_label(&label))
-                    ),
-                    text_input("Code file", &self.new_command.file)
-                        .on_input(Message::NewCommandFile)
-                        .width(Fill),
-                ]
-                .spacing(8),
-                if self.new_command.format == "pronto" {
-                    let input: Element<'_, Message> =
-                        text_input("Paste Pronto code here", &self.new_command.hex)
-                            .on_input(Message::NewCommandHex)
-                            .width(Fill)
-                            .into();
-                    input
-                } else if self.new_command.format == "lirc" {
-                    row![
-                        text_input("Remote name", &self.new_command.remote)
-                            .on_input(Message::NewCommandRemote)
-                            .width(Fill),
-                        text_input("Button name", &self.new_command.button)
-                            .on_input(Message::NewCommandButton)
-                            .width(Fill),
-                    ]
-                    .spacing(8)
-                    .into()
-                } else {
-                    text_input("Command name", &self.new_command.button)
-                        .on_input(Message::NewCommandButton)
-                        .width(Fill)
-                        .into()
-                },
-                action("Add command", Message::AddCommand, self.busy),
-            ]
-            .spacing(10)
-            .into(),
-        ));
-        Column::with_children(content).spacing(16).into()
-    }
-
-    fn view_keymap(&self) -> Element<'_, Message> {
-        let mut content: Vec<Element<'_, Message>> = vec![text("Buttons").size(28).into()];
-        if let Some(error) = &self.error {
-            content.push(error_banner(error, self.advanced));
-        }
-        let names = self.device_names();
-        content.push(
-            row![
-                text("For").size(13),
-                pick_list(
-                    names.clone(),
-                    self.selected_device_name(),
-                    Message::SelectDeviceNamed
-                ),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center)
-            .into(),
-        );
-        let mut routing_options = vec!["Each device itself".to_string()];
-        routing_options.extend(names.clone());
-        content.push(card(
-            "Volume and channel buttons",
-            column![
-                text(
-                    "Choose which device these buttons should always control, whichever device you are using."
-                )
-                .size(12),
-                row![
-                    text("Volume buttons").size(13).width(Length::Fixed(140.0)),
-                    pick_list(
-                        routing_options.clone(),
-                        Some(
-                            self.model
-                                .routing
-                                .as_ref()
-                                .and_then(|routing| routing.volume.clone())
-                                .unwrap_or_else(|| "Each device itself".into())
-                        ),
-                        |value| Message::RoutingVolume(none_if_placeholder(value)),
-                    ),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-                row![
-                    text("Channel buttons").size(13).width(Length::Fixed(140.0)),
-                    pick_list(
-                        routing_options,
-                        Some(
-                            self.model
-                                .routing
-                                .as_ref()
-                                .and_then(|routing| routing.channel.clone())
-                                .unwrap_or_else(|| "Each device itself".into())
-                        ),
-                        |value| Message::RoutingChannel(none_if_placeholder(value)),
-                    ),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            ]
-            .spacing(10)
-            .into(),
-        ));
-        let Some(device) = self.selected_device() else {
-            content.push(text("Add a device first.").size(14).into());
-            return Column::with_children(content).spacing(16).into();
-        };
-        content.push(text(format!("Buttons for {}", device.name)).size(16).into());
-        let mut rows: Vec<Element<'_, Message>> = Vec::new();
-        for chunk in profile::HARMONY_300.key_layout.chunks(5) {
-            let mut buttons: Vec<Element<'_, Message>> = Vec::new();
-            for binding in chunk {
-                let bound = device.keys.contains_key(binding.name);
-                let inherited = routed_target(&self.model, binding.name, &device.name);
-                let label = if let Some(ref target) = inherited {
-                    format!("{}\n({target})", humanize(binding.name))
-                } else {
-                    format!(
-                        "{}{}",
-                        humanize(binding.name),
-                        if bound { " •" } else { "" }
-                    )
-                };
-                let mut key_button = button(text(label).size(11))
-                    .width(Length::Fixed(128.0))
-                    .height(Length::Fixed(40.0))
-                    .padding(4)
-                    .style(button::secondary);
-                if !self.busy && inherited.is_none() {
-                    key_button = key_button.on_press(Message::SelectKey(binding.name.into()));
-                }
-                if self.selected_key.as_deref() == Some(binding.name) {
-                    key_button = key_button.style(button::primary);
-                }
-                buttons.push(key_button.into());
-            }
-            rows.push(Row::with_children(buttons).spacing(6).into());
-        }
-        content.push(card(
-            "Remote buttons",
-            Column::with_children(rows).spacing(6).into(),
-        ));
-        let selected = self.selected_key.clone();
-        content.push(card(
-            "Selected button",
-            if let Some(key) = &selected {
-                column![
-                    text(humanize(key)).size(18),
-                    text(
-                        device
-                            .keys
-                            .get(key)
-                            .map(|command| format!("Sends {}", humanize(command)))
-                            .unwrap_or_else(|| "Nothing assigned".into())
-                    )
-                    .size(13),
-                    action("Clear", Message::ClearKey, self.busy),
-                ]
-                .spacing(8)
-                .into()
-            } else {
-                text("Choose a button above or in the list.")
-                    .size(13)
-                    .into()
-            },
-        ));
-        let filter = self.command_filter.to_lowercase();
-        let mut palette: Vec<Element<'_, Message>> = Vec::new();
-        for command in device.commands.keys() {
-            if filter.is_empty() || command.to_lowercase().contains(&filter) {
-                let mut item = button(text(humanize(command)).size(13))
-                    .width(Fill)
-                    .padding([6, 8])
-                    .style(button::secondary);
-                if selected.is_some() && !self.busy {
-                    item = item.on_press(Message::AssignCommand(command.clone()));
-                }
-                palette.push(item.into());
-            }
-        }
-        content.push(card(
-            "Command palette",
-            column![
-                text_input("Filter commands", &self.command_filter)
-                    .on_input(Message::CommandFilter)
-                    .width(Fill),
-                if palette.is_empty() {
-                    let empty: Element<'_, Message> = text("No matching Commands.").size(13).into();
-                    empty
-                } else {
-                    Column::with_children(palette).spacing(4).into()
-                },
-            ]
-            .spacing(8)
-            .into(),
-        ));
-        let mut table: Vec<Element<'_, Message>> = Vec::new();
-        for binding in profile::HARMONY_300.key_layout {
-            let assigned = device.keys.get(binding.name);
-            let inherited = routed_target(&self.model, binding.name, &device.name);
-            let value = inherited
-                .as_ref()
-                .map(|target| format!("inherited from {target}"))
-                .or_else(|| assigned.cloned())
-                .unwrap_or_else(|| "—".into());
-            table.push(
-                row![
-                    text(humanize(binding.name))
-                        .size(13)
-                        .width(Length::Fixed(160.0)),
-                    text(value).size(13).font(Font::MONOSPACE),
-                    iced::widget::Space::new().width(Length::Fill),
-                    button("Choose")
-                        .on_press_maybe(
-                            (!self.busy && inherited.is_none())
-                                .then_some(Message::SelectKey(binding.name.into()))
-                        )
-                        .style(button::secondary),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center)
-                .into(),
-            );
-        }
-        content.push(card(
-            "All buttons",
-            Column::with_children(table).spacing(4).into(),
-        ));
-        Column::with_children(content).spacing(16).into()
-    }
-
-    fn view_activities(&self) -> Element<'_, Message> {
-        let mut content: Vec<Element<'_, Message>> = vec![text("Watch TV").size(28).into()];
-        if let Some(error) = &self.error {
-            content.push(error_banner(error, self.advanced));
-        }
-        let names = self.device_names();
-        content.push(card(
-            "Watch TV setup",
-            column![
-                text("Which device changes channels?").size(12),
-                pick_list(
-                    names.clone(),
-                    Some(self.model.activity.channel_device.clone()),
-                    Message::ActivityChannel
-                ),
-            ]
-            .spacing(8)
-            .into(),
-        ));
-        let mut steps: Vec<Element<'_, Message>> = Vec::new();
-        for (index, step) in self.model.activity.steps.iter().enumerate() {
-            steps.push(
-                row![
-                    pick_list(names.clone(), Some(step.device.clone()), move |device| {
-                        Message::StepDevice(index, device)
-                    }),
-                    text_input("power", step.power.as_deref().unwrap_or(""))
-                        .on_input(move |value| Message::StepPower(index, value))
-                        .width(Length::Fixed(130.0)),
-                    text_input("input", step.input.as_deref().unwrap_or(""))
-                        .on_input(move |value| Message::StepInput(index, value))
-                        .width(Length::Fixed(130.0)),
-                    text_input("ms", &step.delay_ms.to_string())
-                        .on_input(move |value| Message::StepDelay(index, value))
-                        .width(Length::Fixed(80.0)),
-                    button("Delete")
-                        .on_press_maybe((!self.busy).then_some(Message::DeleteStep(index)))
-                        .style(button::danger),
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center)
-                .into(),
-            );
-        }
-        content.push(card(
-            "Devices to switch on",
-            if steps.is_empty() {
-                text("No devices added yet.").size(13).into()
-            } else {
-                Column::with_children(steps).spacing(6).into()
-            },
-        ));
-        content.push(card(
-            "Add a device",
-            column![
-                pick_list(
-                    names,
-                    Some(self.activity_device.clone()),
-                    Message::ActivityDevice
-                ),
-                row![
-                    text_input("Power command", &self.activity_power)
-                        .on_input(Message::ActivityPower)
-                        .width(Fill),
-                    text_input("Input command", &self.activity_input)
-                        .on_input(Message::ActivityInput)
-                        .width(Fill),
-                    text_input("Wait (ms)", &self.activity_delay)
-                        .on_input(Message::ActivityDelay)
-                        .width(Length::Fixed(100.0)),
-                    action("Add device", Message::AddStep, self.busy),
-                ]
-                .spacing(8),
-            ]
-            .spacing(8)
-            .into(),
-        ));
-        Column::with_children(content).spacing(16).into()
-    }
-
-    fn view_favourites(&self) -> Element<'_, Message> {
-        let mut content: Vec<Element<'_, Message>> = vec![text("Favourites").size(28).into()];
-        if let Some(error) = &self.error {
-            content.push(error_banner(error, self.advanced));
-        }
-        let capacity = profile::skin_profile(&profile::HARMONY_300, self.model.skin)
-            .map(|skin| skin.favourite_capacity)
-            .unwrap_or(0);
-        content.push(
-            text(format!(
-                "Your remote has {capacity} favourite channel button{}.",
-                if capacity == 1 { "" } else { "s" }
-            ))
-            .size(13)
-            .into(),
-        );
-        let mut favourites: Vec<Element<'_, Message>> = Vec::new();
-        for (index, favourite) in self.model.favourites.iter().enumerate() {
-            favourites.push(
-                row![
-                    text(format!("Button {}", favourite.key))
-                        .size(13)
-                        .width(Length::Fixed(70.0)),
-                    text_input("channel", &favourite.channel)
-                        .on_input(move |value| Message::FavouriteChannel(index, value))
-                        .width(Length::Fixed(140.0)),
-                    button("Remove")
-                        .on_press_maybe((!self.busy).then_some(Message::DeleteFavourite(index)))
-                        .style(button::danger),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center)
-                .into(),
-            );
-        }
-        content.push(card(
-            "Your favourites",
-            if favourites.is_empty() {
-                text("No favourite channels yet.").size(13).into()
-            } else {
-                Column::with_children(favourites).spacing(6).into()
-            },
-        ));
-        content.push(card(
-            "Add a favourite",
-            row![
-                text_input("Channel number", &self.new_favourite_channel)
-                    .on_input(Message::NewFavouriteChannel)
-                    .width(Fill),
-                action("Add", Message::AddFavourite, self.busy),
-            ]
-            .spacing(8)
-            .into(),
-        ));
-        Column::with_children(content).spacing(16).into()
-    }
-
-    fn view_settings(&self) -> Element<'_, Message> {
-        let mut content: Vec<Element<'_, Message>> = vec![text("Settings").size(28).into()];
-        if let Some(error) = &self.error {
-            content.push(error_banner(error, self.advanced));
-        }
-        content.push(card(
-            "Display",
-            column![
-                text("Changes are saved automatically.").size(13),
-                checkbox(self.advanced)
-                    .label("Show technical details")
-                    .on_toggle(Message::ToggleAdvanced),
-            ]
-            .spacing(8)
-            .into(),
-        ));
-        if self.advanced {
-            content.push(card(
-                "Remote setup",
-                column![
-                    data_line("Data directory", &self.data_dir.display().to_string()),
-                    data_line("Model", &self.model_path.display().to_string()),
-                    data_line("Container", &self.container_path.display().to_string()),
-                    data_line("Backups", &self.backups_dir.display().to_string()),
-                    row![
-                        text("Skin").size(13).width(Length::Fixed(140.0)),
-                        pick_list(vec![78u8, 79], Some(self.model.skin), Message::SkinChanged),
-                    ]
-                    .spacing(8)
-                    .align_y(Alignment::Center),
-                    row![
-                        action("Save now", Message::Save, self.busy),
-                        action("Reload", Message::Reload, self.busy),
-                    ]
-                    .spacing(8),
-                ]
-                .spacing(8)
-                .into(),
-            ));
-            content.push(card(
-                "Configuration file",
-                column![
-                    text(
-                        "The active setup is ordinary Model JSON. Export it for the CLI, or import a setup prepared elsewhere."
-                    )
-                    .size(12),
-                    text_input("Path to Model JSON", &self.model_transfer_path)
-                        .on_input(Message::TransferPath)
-                        .width(Fill),
-                    row![
-                        action("Export Model", Message::ExportModel, self.busy),
-                        action("Import Model", Message::ImportModel, self.busy),
-                    ]
-                    .spacing(8),
-                ]
-                .spacing(8)
-                .into(),
-            ));
-        }
-        content.push(card(
-            "About",
-            column![
-                text("Remote Rebirth — offline setup for your Harmony 300").size(13),
-                text("Works without an internet connection.").size(12),
-            ]
-            .spacing(6)
-            .into(),
-        ));
-        Column::with_children(content).spacing(16).into()
+        views::view(self)
     }
 }
 
@@ -2657,151 +2007,6 @@ fn step_label(step: &str) -> &str {
     }
 }
 
-fn data_line(label: &str, value: &str) -> Element<'static, Message> {
-    row![
-        text(label.to_string()).size(12).width(Length::Fixed(120.0)),
-        text(value.to_string()).size(12).font(Font::MONOSPACE),
-    ]
-    .spacing(8)
-    .into()
-}
-
-fn action(label: &'static str, message: Message, disabled: bool) -> Element<'static, Message> {
-    button(text(label).size(14))
-        .on_press_maybe((!disabled).then_some(message))
-        .style(button::primary)
-        .padding([8, 14])
-        .into()
-}
-
-fn friendly_error(error: &str) -> String {
-    let lower = error.to_ascii_lowercase();
-    if lower.contains("no harmony remote found") || lower.contains("no remote found") {
-        "No Harmony remote found. Connect it with the USB cable and try again.".into()
-    } else if lower.contains("multiple harmony remotes") {
-        "More than one Harmony remote is connected. Disconnect all but one.".into()
-    } else if lower.contains("declares 0 devices") {
-        "Add at least one device before checking the setup.".into()
-    } else if lower.contains("does not bind key") {
-        "Choose the volume or channel buttons for the target device first.".into()
-    } else if lower.contains("which routing") {
-        "This button is controlled by another device. Change the volume or channel control first."
-            .into()
-    } else if lower.contains("backup validation") || lower.contains("unverified backup") {
-        "That backup is damaged or incomplete. Choose another backup.".into()
-    } else if lower.contains("current configuration does not match backup") {
-        "The remote has changed since the backup. Save a new backup, then try again.".into()
-    } else if lower.contains("read-back mismatch") {
-        "The remote did not store the update correctly. Restore your backup.".into()
-    } else if lower.contains("container is for skin") {
-        "This setup is for a different remote version. Use the connected remote's version, then check the setup again.".into()
-    } else if lower.contains("container is") || lower.contains("container checksum") {
-        "The new setup is not valid. Check the devices and buttons.".into()
-    } else if lower.contains("link_packet_length") {
-        "This remote is not responding correctly. Reconnect it and try again.".into()
-    } else {
-        error.to_string()
-    }
-}
-
-fn error_banner(error: &str, advanced: bool) -> Element<'_, Message> {
-    let mut body = column![
-        row![
-            text(friendly_error(error)).size(13),
-            iced::widget::Space::new().width(Length::Fill),
-            button(text(if advanced {
-                "Hide details"
-            } else {
-                "Technical details"
-            }))
-            .on_press(Message::ToggleAdvanced(!advanced))
-            .style(button::secondary),
-            button("Dismiss")
-                .on_press(Message::DismissError)
-                .style(button::secondary),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center)
-    ]
-    .spacing(4);
-    if advanced {
-        body = body.push(text(error.to_string()).size(11).font(Font::MONOSPACE));
-    }
-    container(body)
-        .padding(10)
-        .width(Fill)
-        .style(|theme: &Theme| container::Style {
-            background: Some(Background::Color(
-                theme.extended_palette().danger.weak.color,
-            )),
-            border: Border {
-                radius: 8.0.into(),
-                width: 1.0,
-                color: theme.extended_palette().danger.base.color,
-            },
-            ..Default::default()
-        })
-        .into()
-}
-
-fn card<'a>(title: impl ToString, content: Element<'a, Message>) -> Element<'a, Message> {
-    container(
-        column![
-            text(title.to_string()).size(16).font(Font::MONOSPACE),
-            content
-        ]
-        .spacing(10),
-    )
-    .padding(16)
-    .width(Fill)
-    .style(card_style)
-    .into()
-}
-
-fn card_style(theme: &Theme) -> container::Style {
-    let palette = theme.extended_palette();
-    container::Style {
-        background: Some(Background::Color(palette.background.base.color)),
-        border: Border {
-            radius: 10.0.into(),
-            width: 1.0,
-            color: palette.background.strong.color,
-        },
-        shadow: Shadow {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.06),
-            offset: Vector::new(0.0, 1.0),
-            blur_radius: 4.0,
-        },
-        ..Default::default()
-    }
-}
-
-fn sidebar_style(theme: &Theme) -> container::Style {
-    let palette = theme.extended_palette();
-    container::Style {
-        background: Some(Background::Color(palette.background.weak.color)),
-        border: Border {
-            width: 1.0,
-            color: palette.background.strong.color,
-            ..Default::default()
-        },
-        ..Default::default()
-    }
-}
-
-fn footer_style(theme: &Theme) -> container::Style {
-    let palette = theme.extended_palette();
-    container::Style {
-        background: Some(Background::Color(palette.background.weak.color)),
-        border: Border {
-            width: 1.0,
-            color: palette.background.strong.color,
-            ..Default::default()
-        },
-        ..Default::default()
-    }
-}
-
 fn list_backups(directory: &Path) -> Vec<PathBuf> {
     let mut backups: Vec<PathBuf> = std::fs::read_dir(directory)
         .into_iter()
@@ -2815,38 +2020,118 @@ fn list_backups(directory: &Path) -> Vec<PathBuf> {
     backups
 }
 
-fn backup_detail(path: &Path, advanced: bool) -> String {
-    let mut sidecar = path.as_os_str().to_os_string();
-    sidecar.push(".json");
-    let Ok(bytes) = std::fs::read(PathBuf::from(sidecar)) else {
-        return "Saved backup".into();
-    };
-    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
-        return "Saved backup".into();
-    };
-    let validation = value["validation"].as_str().unwrap_or("unknown");
-    if !advanced {
-        return if validation == "ok" {
-            "Saved backup · valid".into()
-        } else {
-            "Saved backup · damaged".into()
-        };
+fn scan_library(root: &Path) -> Result<Vec<LibraryDevice>, String> {
+    if !root.is_dir() {
+        return Err(format!("{} is not a folder.", root.display()));
     }
-    format!(
-        "{} · Skin {} · {} · {} B",
-        value["model"].as_str().unwrap_or("unknown"),
-        value["skin"]
-            .as_u64()
-            .map(|skin| skin.to_string())
-            .unwrap_or_else(|| "?".into()),
-        validation,
-        value["size"].as_u64().unwrap_or(0)
-    )
+    let mut directories = vec![root.to_path_buf()];
+    let mut devices = Vec::new();
+    while let Some(directory) = directories.pop() {
+        let entries = std::fs::read_dir(&directory)
+            .map_err(|error| format!("{}: {error}", directory.display()))?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                directories.push(path);
+                continue;
+            }
+            if path.extension().and_then(|extension| extension.to_str()) != Some("ir") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let mut commands: Vec<String> = text
+                .lines()
+                .filter_map(|line| line.strip_prefix("name:"))
+                .map(|name| name.trim().to_string())
+                .filter(|name| !name.is_empty())
+                .collect();
+            commands.sort();
+            commands.dedup();
+            if commands.is_empty() {
+                continue;
+            }
+            let relative = path.strip_prefix(root).ok();
+            let brand = relative
+                .and_then(|relative| relative.parent())
+                .and_then(|parent| parent.components().next())
+                .map(|component| component.as_os_str().to_string_lossy().into_owned())
+                .unwrap_or_else(|| "Local".into());
+            let model = path
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string());
+            devices.push(LibraryDevice {
+                brand,
+                model,
+                path,
+                commands,
+            });
+            if devices.len() >= 20_000 {
+                break;
+            }
+        }
+    }
+    devices.sort_by(|left, right| {
+        left.brand
+            .cmp(&right.brand)
+            .then(left.model.cmp(&right.model))
+    });
+    Ok(devices)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn library_scan_indexes_brand_model_and_commands() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let brand = directory.path().join("Samsung");
+        std::fs::create_dir_all(&brand).expect("brand dir");
+        std::fs::write(
+            brand.join("TV.ir"),
+            "Filetype: IR signals file\nVersion: 1\n#\nname: Power\ntype: parsed\n#\nname: Volume Up\ntype: raw\n",
+        )
+        .expect("write library file");
+        let devices = scan_library(directory.path()).expect("scan");
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].brand, "Samsung");
+        assert_eq!(devices[0].model, "TV");
+        assert_eq!(devices[0].commands, ["Power", "Volume Up"]);
+    }
+
+    #[test]
+    fn library_import_adds_all_commands_to_selected_device() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let brand = directory.path().join("Samsung");
+        std::fs::create_dir_all(&brand).expect("brand dir");
+        std::fs::write(
+            brand.join("TV.ir"),
+            "Filetype: IR signals file\nVersion: 1\nname: Power\ntype: parsed\nname: Volume Up\ntype: raw\n",
+        )
+        .expect("write library file");
+        let (mut app, _) = App::at(directory.path().join("data"));
+        app.library = scan_library(directory.path()).expect("scan");
+        app.library_selected = Some(0);
+        app.model.devices.push(Device {
+            name: "Living Room TV".into(),
+            device_key: 1,
+            commands: BTreeMap::new(),
+            keys: BTreeMap::new(),
+        });
+        app.selected_device = 0;
+        let _ = app.update(Message::AddLibraryDevice);
+        let device = &app.model.devices[0];
+        assert!(device.commands.contains_key("Power"));
+        assert!(device.commands.contains_key("Volume Up"));
+        assert_eq!(device.commands["Power"].source.format, "flipper");
+        assert_eq!(
+            device.commands["Power"].source.button.as_deref(),
+            Some("Power")
+        );
+    }
 
     #[test]
     fn blank_app_builds_a_valid_one_device_project() {
@@ -2922,6 +2207,83 @@ mod tests {
         ui.click("Find remote").expect("click Find remote");
         let messages: Vec<_> = ui.into_messages().collect();
         assert!(matches!(messages.first(), Some(Message::Detect)));
+    }
+
+    #[test]
+    fn lifecycle_phase_follows_the_operation() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (mut app, _) = App::at(directory.path().to_path_buf());
+        assert_eq!(app.phase, Phase::Detect);
+        app.begin("Backing up the Remote");
+        assert_eq!(app.phase, Phase::Backup);
+        app.begin("Preparing a Write");
+        assert_eq!(app.phase, Phase::Prepare);
+        app.begin("Writing to the Remote");
+        assert_eq!(app.phase, Phase::Commit);
+        app.finish(OpDone::Committed(WriteResult {
+            operation: "write",
+            commit: true,
+            container: None,
+            backup: PathBuf::from("backup.bin"),
+            size: 0,
+            backup_sha256: "0".repeat(64),
+            bytes: 0,
+            chunks: 0,
+            data_packets: 0,
+            reboot: false,
+            journal: None,
+        }));
+        assert_eq!(app.phase, Phase::ReadBack);
+        app.finish(OpDone::Detected(DetectReport {
+            supported: false,
+            model: "Harmony 200".into(),
+            family: None,
+            profile: None,
+            architecture: None,
+            skin: None,
+            firmware_version: None,
+            hardware_version: None,
+            guid: None,
+            serial: None,
+            usb: remote_rebirth_core::gui_api::UsbIdentity {
+                vendor_id: 0,
+                product_id: 0,
+                bcd_device: 0,
+                product: None,
+                serial: None,
+                bus: 0,
+                address: 0,
+            },
+        }));
+        assert_eq!(app.phase, Phase::Detect);
+    }
+
+    #[test]
+    fn keyboard_shortcuts_change_chapters_and_dismiss() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (mut app, _) = App::at(directory.path().to_path_buf());
+        assert_eq!(app.page, Page::Remote);
+        let _ = app.update(Message::Shortcut(
+            Key::Character("3".into()),
+            Modifiers::CTRL,
+        ));
+        assert_eq!(app.page, Page::KeyMap);
+        let _ = app.update(Message::Shortcut(
+            Key::Named(Named::PageDown),
+            Modifiers::CTRL,
+        ));
+        assert_eq!(app.page, Page::Activities);
+        let _ = app.update(Message::Shortcut(
+            Key::Named(Named::PageUp),
+            Modifiers::CTRL,
+        ));
+        assert_eq!(app.page, Page::KeyMap);
+        app.error = Some("connection lost".into());
+        let _ = app.update(Message::Shortcut(
+            Key::Named(Named::Escape),
+            Modifiers::NONE,
+        ));
+        assert!(app.error.is_none());
     }
 
     #[test]

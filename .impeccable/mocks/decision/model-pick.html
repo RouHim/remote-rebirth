@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Remote Rebirth — Printed Listings</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Narrow:wght@600;700&family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#F4EFE3; --ink:#191817; --red:#B5392C; --blue:#21456E; --rule:#C9C0AE;
+  --muted:#7C7362; --tint:#EBE3D2; --white:#FBF8F0;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:900px;width:1440px;overflow:hidden}
+body{font-family:"Public Sans",sans-serif;color:var(--ink);background:var(--paper);font-size:13px;line-height:1.35}
+button,input{font:inherit;color:inherit}
+.mast{padding:22px 36px 0;border-bottom:3px solid var(--ink)}
+.mast-top{display:flex;justify-content:space-between;align-items:flex-end}
+.wordmark{font-family:"Archivo Narrow",sans-serif;font-weight:700;font-size:40px;line-height:.86;letter-spacing:-.015em;text-transform:uppercase}
+.wordmark span{color:var(--red)}
+.mast-meta{text-align:right;font-size:11.5px;color:var(--muted);line-height:1.5}
+.mast-meta b{display:block;color:var(--ink);font-size:12px;letter-spacing:.02em}
+.nav{display:flex;gap:26px;margin-top:14px}
+.nav a{padding:8px 0 9px;text-decoration:none;color:#4B463C;font-size:12px;letter-spacing:.08em;text-transform:uppercase;font-weight:600}
+.nav a.on{color:var(--ink);box-shadow:inset 0 -4px 0 var(--red)}
+.page{display:grid;grid-template-columns:minmax(0,1fr) 362px;gap:0;padding:0 36px;height:calc(900px - 22px - 58px - 40px - 64px)}
+.left{padding-right:28px;display:flex;flex-direction:column;min-height:0}
+.headline{display:flex;align-items:flex-end;justify-content:space-between;padding:16px 0 10px}
+h1{font-family:"Archivo Narrow",sans-serif;font-size:46px;line-height:.9;letter-spacing:-.01em;text-transform:uppercase}
+h1 em{font-style:normal;color:var(--red)}
+.sub{color:var(--muted);font-size:12px;margin-top:6px;max-width:52ch}
+.actions{display:flex;gap:8px;align-items:center}
+.btn{border:1px solid var(--ink);background:transparent;padding:8px 14px;font-size:12px;font-weight:600}
+.btn.primary{background:var(--red);border-color:var(--red);color:#FFF8EA}
+.devbar{display:flex;border-top:2px solid var(--ink);border-bottom:1px solid var(--ink);margin-bottom:2px}
+.devbar div{flex:1;padding:8px 10px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border-right:1px solid var(--rule);display:flex;justify-content:space-between}
+.devbar div:last-child{border-right:0}
+.devbar div.on{background:var(--ink);color:#FBF6E9}
+.devbar b{font-weight:600}
+.devbar span{font-size:9.5px;opacity:.7}
+.list{flex:1;min-height:0}
+.row{display:grid;grid-template-columns:52px 148px minmax(0,1fr) 116px 84px;gap:10px;align-items:center;border-bottom:1px solid var(--rule);padding:7px 4px;font-size:12px}
+.row.head{font-size:9.5px;letter-spacing:.15em;text-transform:uppercase;color:var(--muted);border-bottom:2px solid var(--ink);padding-top:2px;padding-bottom:6px}
+.num{font-family:"Archivo Narrow",sans-serif;font-size:19px;font-weight:700;color:var(--red);line-height:1}
+.row .key{font-weight:600}
+.row .cmd{color:#312D26}
+.row .dev{font-size:10.5px;color:var(--muted)}
+.row .dev b{display:inline-block;background:var(--tint);color:#4B4235;padding:2px 5px;font-weight:600;font-size:9.5px;letter-spacing:.04em}
+.row .state{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;text-align:right;color:var(--blue)}
+.row .state.empty{color:var(--red)}
+.row.hl{background:#FCF8EC;box-shadow:inset 3px 0 0 var(--red)}
+.routing{margin-top:14px;border-top:2px solid var(--ink);padding-top:10px}
+.routing h3{font-family:"Archivo Narrow",sans-serif;font-size:15px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+.route-line{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:12px;border-bottom:1px solid var(--rule)}
+.route-line .tag{width:8px;height:8px;border-radius:50%}
+.route-line b{font-weight:600}
+.route-line span{color:var(--muted);font-size:11px}
+.route-line .keys{margin-left:auto;color:#4B4235;font-size:10.5px;letter-spacing:.02em}
+.right{border-left:1px solid var(--rule);padding-left:24px;display:flex;flex-direction:column;min-height:0}
+.right h2{font-family:"Archivo Narrow",sans-serif;font-size:18px;text-transform:uppercase;letter-spacing:.05em;padding:16px 0 8px;border-bottom:2px solid var(--ink);display:flex;justify-content:space-between;align-items:baseline}
+.right h2 small{font-family:"Public Sans",sans-serif;font-size:10px;color:var(--muted);letter-spacing:.06em;text-transform:none}
+.remote-mini{display:flex;justify-content:center;padding:14px 0 6px}
+.remote{width:196px;background:#EFE6D4;border:1.5px solid var(--ink);border-radius:18px;padding:11px}
+.screen{height:44px;background:var(--ink);color:#EDE4CF;padding:6px 8px;font-size:9px;line-height:1.3}
+.screen b{color:#FFF8E8}
+.devkeys{display:grid;grid-template-columns:repeat(4,1fr);gap:3px;margin:7px 0 9px}
+.devkeys div{font-size:7.5px;text-align:center;border:1px solid #A89C86;padding:3px 0;color:#5D5545}
+.devkeys .on{background:var(--red);border-color:var(--red);color:#FFF8EA}
+.pad{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.pad .block{border:1px solid #A89C86;border-radius:4px;padding:4px;font-size:7.5px;text-align:center;color:#5D5545}
+.pad .nav{height:52px;border-radius:50%;display:grid;place-items:center;background:#E4D9C4}
+.pad .nav b{width:18px;height:18px;border-radius:50%;background:var(--ink);color:#fff;font-size:7px;display:grid;place-items:center}
+.pad .rock{display:grid;gap:3px}
+.pad .rock div{border:1px solid #A89C86;border-radius:9px;padding:3px 0}
+.pad .rock .lit{background:var(--red);border-color:var(--red);color:#FFF8EA}
+.finder{margin-top:10px;border-top:2px solid var(--ink);padding-top:9px;display:flex;flex-direction:column;min-height:0;flex:1}
+.finder h3{font-family:"Archivo Narrow",sans-serif;font-size:15px;text-transform:uppercase;letter-spacing:.06em;display:flex;justify-content:space-between}
+.finder h3 small{font-family:"Public Sans",sans-serif;font-size:9.5px;color:var(--muted);text-transform:none;letter-spacing:.02em}
+.search{margin:8px 0;border:1px solid #A89C86;background:var(--white);padding:6px 9px;color:var(--muted);font-size:11.5px;display:flex;justify-content:space-between}
+.search kbd{font-size:9px;border:1px solid var(--rule);padding:0 4px;color:#6E6554}
+.frow{display:flex;justify-content:space-between;gap:8px;padding:6px 2px;border-bottom:1px solid #DED5C3;font-size:11.5px}
+.frow b{font-weight:600}
+.frow small{display:block;color:var(--muted);font-size:9.5px}
+.frow .p{font-family:"Archivo Narrow",sans-serif;font-size:11px;letter-spacing:.06em;color:#6E6554}
+footer{height:40px;margin:0 36px;border-top:3px solid var(--ink);display:flex;align-items:center;justify-content:space-between;font-size:10.5px;color:var(--muted);letter-spacing:.03em}
+footer b{color:var(--ink);font-weight:600}
+</style>
+</head>
+<body>
+<header class="mast">
+  <div class="mast-top">
+    <div class="wordmark">Remote<br>Rebirth<span>.</span></div>
+    <div class="mast-meta"><b>Friday, November 6 · Living Room</b>Harmony 300 · USB connected<br>All changes saved 09:41</div>
+  </div>
+  <nav class="nav"><a href="#">Remote</a><a href="#">My Devices</a><a href="#" class="on">Buttons</a><a href="#">Watch TV</a><a href="#">Favourites</a><a href="#">Settings</a></nav>
+</header>
+<div class="page">
+  <section class="left">
+    <div class="headline">
+      <div><h1>Every button,<br><em>one page.</em></h1><p class="sub">Pick a device, then choose what each key sends. Volume and channel keep working from any device.</p></div>
+      <div class="actions"><button class="btn">Back up now</button><button class="btn primary">Prepare write</button></div>
+    </div>
+    <div class="devbar"><div class="on"><b>Living Room TV</b><span>12 keys</span></div><div><b>Cable Box</b><span>9 keys</span></div><div><b>DVD Player</b><span>6 keys</span></div><div><b>Empty</b><span>—</span></div></div>
+    <div class="list">
+      <div class="row head"><span>No.</span><span>Button</span><span>Sends</span><span>Device</span><span>State</span></div>
+      <div class="row hl"><span class="num">01</span><span class="key">Volume up</span><span class="cmd">Volume up</span><span class="dev"><b>TV</b></span><span class="state">Assigned</span></div>
+      <div class="row"><span class="num">02</span><span class="key">Volume down</span><span class="cmd">Volume down</span><span class="dev"><b>TV</b></span><span class="state">Assigned</span></div>
+      <div class="row"><span class="num">03</span><span class="key">Mute</span><span class="cmd">Mute</span><span class="dev"><b>TV</b></span><span class="state">Assigned</span></div>
+      <div class="row"><span class="num">04</span><span class="key">Channel up</span><span class="cmd">Channel up</span><span class="dev"><b>CABLE</b></span><span class="state">Volume route</span></div>
+      <div class="row"><span class="num">05</span><span class="key">Channel down</span><span class="cmd">Channel down</span><span class="dev"><b>CABLE</b></span><span class="state">Volume route</span></div>
+      <div class="row"><span class="num">06</span><span class="key">Power</span><span class="cmd">Power toggle</span><span class="dev"><b>TV</b></span><span class="state">Assigned</span></div>
+      <div class="row"><span class="num">07</span><span class="key">Input</span><span class="cmd">Source: HDMI 2</span><span class="dev"><b>TV</b></span><span class="state">Assigned</span></div>
+      <div class="row"><span class="num">08</span><span class="key">Menu</span><span class="cmd">Menu</span><span class="dev"><b>TV</b></span><span class="state">Assigned</span></div>
+      <div class="row"><span class="num">09</span><span class="key">Guide</span><span class="cmd">Guide</span><span class="dev"><b>TV</b></span><span class="state">Assigned</span></div>
+      <div class="row"><span class="num">10</span><span class="key">Play</span><span class="cmd">Not assigned</span><span class="dev">—</span><span class="state empty">Empty</span></div>
+      <div class="row"><span class="num">11</span><span class="key">Pause</span><span class="cmd">Not assigned</span><span class="dev">—</span><span class="state empty">Empty</span></div>
+    </div>
+    <div class="routing">
+      <h3>Always-on buttons</h3>
+      <div class="route-line"><span class="tag" style="background:var(--red)"></span><b>Volume</b><span>goes to Living Room TV</span><span class="keys">Vol + · Vol − · Mute</span></div>
+      <div class="route-line"><span class="tag" style="background:var(--blue)"></span><b>Channel</b><span>goes to Cable Box</span><span class="keys">Ch + · Ch −</span></div>
+    </div>
+  </section>
+  <aside class="right">
+    <h2>The remote <small>Click a key</small></h2>
+    <div class="remote-mini"><div class="remote">
+      <div class="screen"><b>Living Room TV</b><br>Volume 24 · HDMI 2</div>
+      <div class="devkeys"><div class="on">TV</div><div>CBL</div><div>DVD</div><div>AUX</div></div>
+      <div class="pad">
+        <div class="block nav"><b>OK</b></div>
+        <div class="rock"><div class="lit">Vol +</div><div>Vol −</div><div>Ch +</div><div>Ch −</div></div>
+        <div class="block">Menu</div><div class="block">Guide</div>
+      </div>
+    </div></div>
+    <div class="finder">
+      <h3>Command finder <small>84 commands</small></h3>
+      <div class="search">Search the listings <kbd>/</kbd></div>
+      <div class="frow"><div><b>Volume up</b><small>Living Room TV · used on 1 key</small></div><span class="p">NEC</span></div>
+      <div class="frow"><div><b>Volume down</b><small>Living Room TV</small></div><span class="p">NEC</span></div>
+      <div class="frow"><div><b>Mute</b><small>Living Room TV</small></div><span class="p">NEC</span></div>
+      <div class="frow"><div><b>Power toggle</b><small>Living Room TV</small></div><span class="p">NEC</span></div>
+      <div class="frow"><div><b>Channel up</b><small>Cable Box · used on 1 key</small></div><span class="p">RC5</span></div>
+      <div class="frow"><div><b>Channel down</b><small>Cable Box</small></div><span class="p">RC5</span></div>
+    </div>
+  </aside>
+</div>
+<footer><span><b>All changes saved</b> · Last backup today 09:41</span><span>Container <b>41.2 KB</b> of 256 KB</span><span><b>Harmony 300</b> · ready to write</span></footer>
+</body>
+</html>

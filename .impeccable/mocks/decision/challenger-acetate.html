@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Remote Rebirth — Acetate Manual</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=Spline+Sans+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --board:#2E4C9A; --board-deep:#213A78; --acetate:rgba(255,251,240,.87); --ink:#1D2430;
+  --muted:#5A6378; --vermilion:#BF432D; --grass:#4D7048; --yellow:#D9A81C; --rule:rgba(29,36,48,.22);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:900px;width:1440px;overflow:hidden}
+body{font-family:"Source Serif 4",serif;font-size:13px;line-height:1.55;color:var(--ink);background:var(--board)}
+button,input{font:inherit;color:inherit}
+.app{display:grid;grid-template-columns:206px 1fr;height:100%}
+.rail{background:var(--board-deep);padding:22px 16px 14px;display:flex;flex-direction:column;color:#EDE6D6}
+.brand{border-bottom:1px solid #43598F;padding:0 6px 18px}
+.brand b{display:block;font-family:"Archivo",sans-serif;font-size:15px;font-weight:600;letter-spacing:.01em;line-height:1.2}
+.brand span{display:block;margin-top:4px;font-family:"Spline Sans Mono",monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:#AEB9D6}
+nav{display:flex;flex-direction:column;margin-top:14px}
+nav a{padding:7px 6px;text-decoration:none;color:#C9D1E6;font-family:"Archivo",sans-serif;font-size:12px;font-weight:500;border-bottom:1px solid #354B85}
+nav a.on{color:#FFF7E4;background:#182C5E;box-shadow:inset 2px 0 0 var(--yellow)}
+nav a em{font-style:normal;float:right;font-family:"Spline Sans Mono",monospace;font-size:9px;color:#93A2C6}
+.rail-foot{margin-top:auto;border-top:1px solid #43598F;padding:10px 6px 0;font-family:"Spline Sans Mono",monospace;font-size:9px;line-height:1.7;color:#AEB9D6}
+.rail-foot b{display:block;color:#FFF7E4;font-weight:500}
+main{padding:16px 18px;display:flex;min-height:0}
+.sheet{background:var(--acetate);flex:1;display:flex;min-height:0;position:relative;box-shadow:0 2px 0 rgba(0,0,0,.25),0 12px 30px -22px #000}
+/* punched holes */
+.holes{width:34px;flex:0 0 34px;border-right:1px solid var(--rule);display:flex;flex-direction:column;align-items:center;padding-top:54px;gap:230px}
+.hole{width:12px;height:12px;border-radius:50%;background:var(--board);box-shadow:inset 0 1px 1px rgba(0,0,0,.4)}
+.body{flex:1;display:flex;flex-direction:column;min-width:0;padding:0 0 0 26px}
+.top{display:flex;justify-content:space-between;align-items:flex-start;padding:20px 0 12px;border-bottom:1px solid var(--ink)}
+h1{font-family:"Archivo",sans-serif;font-size:21px;font-weight:600;line-height:1.1;letter-spacing:-.01em;text-transform:uppercase}
+.sub{font-size:13px;color:var(--muted);margin-top:4px;max-width:56ch}
+.top-right{display:flex;gap:8px;align-items:center}
+.btn{border:1px solid var(--ink);background:transparent;padding:6px 11px;font-family:"Archivo",sans-serif;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.btn.primary{background:var(--vermilion);border-color:var(--vermilion);color:#FFF5E4}
+/* board + tab rail */
+.canvas{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 78px;gap:0;min-height:0;margin-top:12px}
+.work{display:grid;grid-template-columns:340px minmax(0,1fr);gap:20px;min-height:0;padding-right:14px}
+.margin{font-family:"Archivo",sans-serif;font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+.figure{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--rule);padding-right:18px}
+.remote{flex:1;display:flex;align-items:center;justify-content:center}
+.remote-body{width:204px;border:1px solid var(--ink);background:rgba(255,255,255,.35);padding:10px;position:relative}
+.remote-body:before{content:"";position:absolute;left:-7px;top:8px;bottom:8px;width:2px;background:var(--ink)}
+.screen{height:42px;border:1px solid var(--ink);padding:5px 7px;font-family:"Spline Sans Mono",monospace;font-size:8px;line-height:1.5;color:#33402F;background:#E7E2CA}
+.screen b{color:#1D2430}
+.devkeys{display:grid;grid-template-columns:repeat(4,1fr);gap:2px;margin:7px 0}
+.devkeys div{border:1px solid var(--rule);font-family:"Archivo",sans-serif;font-size:7px;text-align:center;padding:3px 0;color:var(--muted)}
+.devkeys .on{background:var(--vermilion);border-color:var(--vermilion);color:#FFF5E4}
+.pads{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+.pad{border:1px solid var(--rule);height:38px;display:grid;place-items:center;font-family:"Archivo",sans-serif;font-size:7px;color:var(--muted)}
+.pad.ring{border-radius:50%;height:46px}
+.rock{display:grid;grid-template-columns:1fr 1fr;gap:3px}
+.rock div{border:1px solid var(--rule);font-family:"Archivo",sans-serif;font-size:7px;text-align:center;padding:3px 0;color:var(--muted)}
+.rock .lit{background:var(--vermilion);border-color:var(--vermilion);color:#FFF5E4}
+.caption{border-top:1px solid var(--rule);padding-top:5px;font-size:11px;color:var(--muted)}
+.list{display:flex;flex-direction:column;min-height:0}
+.table{width:100%;border-collapse:collapse}
+th{font-family:"Archivo",sans-serif;font-size:9px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);text-align:left;padding:0 0 5px;border-bottom:1px solid var(--ink)}
+td{padding:5px 0;border-bottom:1px solid var(--rule);font-size:12px}
+td.n{font-family:"Spline Sans Mono",monospace;font-size:9px;color:var(--muted);width:26px}
+td.key{font-weight:600;width:118px}
+td.dev{color:var(--muted);width:104px}
+td.mark{width:20px;text-align:center}
+td.st{text-align:right;font-family:"Archivo",sans-serif;font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--grass);width:72px}
+.box{display:inline-block;width:7px;height:7px;border:1px solid var(--ink)}
+.box.fill{background:var(--ink)}
+tr.sel td{background:rgba(217,168,28,.22)}
+tr.sel td.key{text-decoration:underline;text-underline-offset:3px}
+.errata{margin-top:10px;background:rgba(191,67,45,.1);border:1px solid var(--vermilion);padding:6px 8px;font-size:11px;color:#7E2C1B;display:flex;gap:8px;align-items:baseline}
+.errata b{font-family:"Archivo",sans-serif;font-size:9px;letter-spacing:.08em;text-transform:uppercase}
+.index{border-top:1px solid var(--ink);margin-top:12px;padding-top:7px;display:flex;flex-direction:column;min-height:0}
+.index-head{display:flex;justify-content:space-between;align-items:baseline}
+.index-head h2{font-family:"Archivo",sans-serif;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em}
+.index-head span{font-family:"Spline Sans Mono",monospace;font-size:9px;color:var(--muted)}
+.search{border-bottom:1px solid var(--rule);padding:4px 0;margin:4px 0 2px;font-size:11px;color:var(--muted);display:flex;justify-content:space-between}
+.cmds{display:grid;grid-template-columns:1fr 1fr;gap:0 20px}
+.crow{display:flex;justify-content:space-between;gap:6px;padding:3px 0;border-bottom:1px solid var(--rule);font-size:11px}
+.crow small{color:var(--muted);font-size:9px}
+.crow .p{font-family:"Spline Sans Mono",monospace;font-size:8.5px;color:var(--muted)}
+/* tab rail */
+.tabs{display:flex;flex-direction:column;border-left:1px solid var(--ink);padding-left:0}
+.tab{background:rgba(255,251,240,.42);border-bottom:1px solid var(--ink);border-right:1px solid var(--ink);font-family:"Archivo",sans-serif;font-size:9px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:0 6px;display:flex;align-items:center;justify-content:space-between}
+.tab.on{background:var(--acetate);color:var(--ink);border-right:0;box-shadow:-2px 0 0 var(--yellow)}
+.tab em{font-style:normal;font-family:"Spline Sans Mono",monospace;font-size:8px;color:var(--muted)}
+.tabs .spacer{flex:1;border-right:1px solid var(--ink)}
+.status{display:flex;justify-content:space-between;align-items:center;padding:9px 0 0;font-family:"Spline Sans Mono",monospace;font-size:9px;color:var(--muted)}
+.status b{color:var(--ink);font-weight:500}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="brand"><b>Remote Rebirth</b><span>Harmony 300 · living room</span></div>
+    <nav><a href="#">Remote <em>READY</em></a><a href="#">My Devices <em>3</em></a><a href="#" class="on">Buttons <em>18</em></a><a href="#">Watch TV</a><a href="#">Favourites</a><a href="#">Settings</a></nav>
+    <div class="rail-foot"><b>Remote connected</b>firmware 1.12<br>last backup 09:41</div>
+  </aside>
+  <main>
+    <div class="sheet">
+      <div class="holes"><div class="hole"></div><div class="hole"></div><div class="hole"></div></div>
+      <div class="body">
+        <div class="top">
+          <div><h1>Buttons · living room TV</h1><p class="sub">Find the key on the diagram, then turn to its number. Volume and channel keep working from any device.</p></div>
+          <div class="top-right"><button class="btn">Back up</button><button class="btn primary">Prepare write</button></div>
+        </div>
+        <div class="canvas">
+          <div class="work">
+            <section class="figure">
+              <div class="margin">Fig. 1 · key layout</div>
+              <div class="remote"><div class="remote-body">
+                <div class="screen"><b>LIVING ROOM TV</b><br>VOL 24 · HDMI 2</div>
+                <div class="devkeys"><div class="on">TV</div><div>CBL</div><div>DVD</div><div>AUX</div></div>
+                <div class="pads"><div class="pad ring">OK</div><div class="rock"><div class="lit">V+</div><div>V−</div><div>C+</div><div>C−</div></div><div class="pad">MENU</div><div class="pad">GUIDE</div></div>
+              </div></div>
+              <div class="caption">Callout 01 is selected. Numbers match the table.</div>
+            </section>
+            <section class="list">
+              <div class="margin">Fig. 2 · assigned commands</div>
+              <table>
+                <tr><th>№</th><th>Button</th><th>Sends</th><th>Device</th><th></th><th style="text-align:right">State</th></tr>
+                <tr class="sel"><td class="n">01</td><td class="key">Volume up</td><td>Volume up</td><td class="dev">Living Room TV</td><td class="mark"><span class="box fill"></span></td><td class="st">Assigned</td></tr>
+                <tr><td class="n">02</td><td class="key">Volume down</td><td>Volume down</td><td class="dev">Living Room TV</td><td class="mark"><span class="box fill"></span></td><td class="st">Assigned</td></tr>
+                <tr><td class="n">03</td><td class="key">Mute</td><td>Mute</td><td class="dev">Living Room TV</td><td class="mark"><span class="box fill"></span></td><td class="st">Assigned</td></tr>
+                <tr><td class="n">04</td><td class="key">Channel up</td><td>Channel up</td><td class="dev">Cable Box</td><td class="mark"><span class="box"></span></td><td class="st">Inherited</td></tr>
+                <tr><td class="n">05</td><td class="key">Channel down</td><td>Channel down</td><td class="dev">Cable Box</td><td class="mark"><span class="box"></span></td><td class="st">Inherited</td></tr>
+                <tr><td class="n">06</td><td class="key">Power</td><td>Power toggle</td><td class="dev">Living Room TV</td><td class="mark"><span class="box fill"></span></td><td class="st">Assigned</td></tr>
+                <tr><td class="n">07</td><td class="key">Input</td><td>Source: HDMI 2</td><td class="dev">Living Room TV</td><td class="mark"><span class="box fill"></span></td><td class="st">Assigned</td></tr>
+                <tr><td class="n">08</td><td class="key">Menu</td><td>Menu</td><td class="dev">Living Room TV</td><td class="mark"><span class="box fill"></span></td><td class="st">Assigned</td></tr>
+                <tr><td class="n">09</td><td class="key">Guide</td><td>Guide</td><td class="dev">Living Room TV</td><td class="mark"><span class="box fill"></span></td><td class="st">Assigned</td></tr>
+                <tr><td class="n">10</td><td class="key">Play</td><td>Not assigned</td><td class="dev">—</td><td class="mark"><span class="box"></span></td><td class="st" style="color:var(--vermilion)">Empty</td></tr>
+              </table>
+              <div class="errata"><b>Errata</b><span>2 keys are empty. Assign a command or remove them from the Watch TV step.</span></div>
+              <div class="index">
+                <div class="index-head"><h2>Command index</h2><span>84 COMMANDS · 12 NOT SENT</span></div>
+                <div class="search">Search by device or command <span>/</span></div>
+                <div class="cmds">
+                  <div class="crow"><div>Volume up <small>Living Room TV · used 1×</small></div><span class="p">NEC</span></div>
+                  <div class="crow"><div>Volume down <small>Living Room TV</small></div><span class="p">NEC</span></div>
+                  <div class="crow"><div>Mute <small>Living Room TV</small></div><span class="p">NEC</span></div>
+                  <div class="crow"><div>Power toggle <small>Living Room TV</small></div><span class="p">NEC</span></div>
+                  <div class="crow"><div>Channel up <small>Cable Box · used 1×</small></div><span class="p">RC5</span></div>
+                  <div class="crow"><div>Channel down <small>Cable Box</small></div><span class="p">RC5</span></div>
+                </div>
+              </div>
+            </section>
+          </div>
+          <div class="tabs">
+            <div class="tab" style="height:46px">Remote <em>1</em></div>
+            <div class="tab" style="height:70px">Devices <em>2</em></div>
+            <div class="tab on" style="height:104px">Buttons <em>3</em></div>
+            <div class="tab" style="height:62px">Watch TV <em>4</em></div>
+            <div class="tab" style="height:54px">Favourites <em>5</em></div>
+            <div class="tab" style="height:44px">Settings <em>6</em></div>
+            <div class="spacer"></div>
+          </div>
+        </div>
+        <div class="status"><span>All changes saved · 8 of 12 keys assigned</span><span>Container <b>41.2 KB</b> / 256 KB · <b>USB ready</b></span></div>
+      </div>
+    </div>
+  </main>
+</div>
+</body>
+</html>
