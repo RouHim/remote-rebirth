@@ -1,11 +1,14 @@
 //! Class-1 IR Record encoding and decoding, and duration-word packing.
 
+#[cfg(test)]
+use crate::ir_types::IrPointerGroup;
 use crate::ir_types::{
-    BLOCK_TERMINATOR, CLASS_STREAM, EncodedIrRecord, IrError, IrPointerGroup, IrRecord, MARK_BIT,
-    MAX_DURATION_US, MAX_POINTER_GROUPS, Pulse, RECORD_POINTER_BIAS,
+    BLOCK_TERMINATOR, CLASS_STREAM, EncodedIrRecord, IrError, IrRecord, MARK_BIT, MAX_DURATION_US,
+    MAX_POINTER_GROUPS, Pulse, RECORD_POINTER_BIAS,
 };
 
 impl IrRecord {
+    #[cfg(test)]
     pub fn pointer_group_count(&self) -> usize {
         self.groups.len()
     }
@@ -118,6 +121,7 @@ impl IrRecord {
     }
 
     /// Read a class-1 record whose header is at `base_addr + header_offset`.
+    #[cfg(test)]
     pub fn decode(bytes: &[u8], base_addr: u32, header_offset: usize) -> Result<Self, IrError> {
         if header_offset > bytes.len() {
             return Err(IrError::Record {
@@ -183,6 +187,7 @@ impl IrRecord {
     }
 }
 
+#[cfg(test)]
 fn read_u24(bytes: &[u8]) -> u32 {
     u32::from(bytes[0]) | (u32::from(bytes[1]) << 8) | (u32::from(bytes[2]) << 16)
 }
@@ -195,6 +200,7 @@ fn u24(value: u32) -> [u8; 3] {
     ]
 }
 
+#[cfg(test)]
 fn read_block(bytes: &[u8], base_addr: u32, pointer: u32) -> Result<Option<Vec<u16>>, IrError> {
     if pointer == 0 {
         return Ok(None);

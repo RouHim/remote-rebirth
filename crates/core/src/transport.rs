@@ -1,4 +1,6 @@
+use crate::container::MAX_CONTAINER_SIZE;
 use crate::error::Error;
+
 /// The reference's read request size: the reply's header report is part of the budget.
 const READ_PACKETS: u16 = 32;
 
@@ -11,7 +13,7 @@ pub struct RemoteDescriptor {
     pub bcd_device: u16,
     pub product: Option<String>,
     pub serial: Option<String>,
-    /// The HID path, when the backend enumerates through hidraw.
+    /// The backend's opaque device path, such as `1-2:1.0` from hidapi's libusb backend.
     pub path: Option<String>,
 }
 
@@ -48,6 +50,13 @@ pub trait RemoteSession {
 
 pub fn read_file(session: &mut dyn RemoteSession, path: &str) -> Result<Vec<u8>, Error> {
     let OpenRead { handle, size } = session.open_read(path)?;
+    if size as usize > MAX_CONTAINER_SIZE {
+        let error = Error::Protocol(format!(
+            "{path} reports {size} bytes, above the {MAX_CONTAINER_SIZE}-byte limit"
+        ));
+        let _ = session.close(handle);
+        return Err(error);
+    }
     let expected = size as usize;
     let mut data = Vec::with_capacity(expected);
     let read_result = (|| {

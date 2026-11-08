@@ -1,4 +1,3 @@
-use std::fs;
 #[cfg(feature = "cli")]
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -81,7 +80,7 @@ pub fn create(
     let timestamp = format_rfc3339(&clock.now())?;
     let model = model_name(architecture, skin);
 
-    fs::write(out, &container)?;
+    crate::output::write_file(out, &container)?;
 
     let sidecar = Sidecar {
         schema_version: 1,
@@ -101,7 +100,7 @@ pub fn create(
         timestamp: timestamp.clone(),
         validation,
     };
-    fs::write(&sidecar_file, serde_json::to_vec_pretty(&sidecar)?)?;
+    crate::output::write_file(&sidecar_file, &serde_json::to_vec_pretty(&sidecar)?)?;
     tracing::info!(
         size = container.len(),
         validation = validation.as_str(),

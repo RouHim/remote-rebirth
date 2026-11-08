@@ -1,5 +1,5 @@
 use std::fs::{self, File, OpenOptions};
-use std::io::Write as _;
+use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -35,7 +35,22 @@ impl<'a> Journal<'a> {
     ) -> Result<Self, Error> {
         fs::create_dir_all(state_dir)?;
         let path = state_dir.join(JOURNAL_FILE);
-        let file = OpenOptions::new().create(true).append(true).open(&path)?;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .append(true)
+            .open(&path)?;
+        // An earlier run may have died mid-record. Start the first new record on its own line so a
+        // truncated tail cannot swallow it.
+        if file.metadata()?.len() > 0 {
+            let mut last = [0u8; 1];
+            file.seek(SeekFrom::End(-1))?;
+            file.read_exact(&mut last)?;
+            if last[0] != b'\n' {
+                file.write_all(b"\n")?;
+                file.sync_data()?;
+            }
+        }
         let operation_id = format!("{command}-{}", format_rfc3339(&clock.now())?);
         Ok(Self {
             file,
@@ -70,9 +85,12 @@ impl<'a> Journal<'a> {
             backup: &self.backup,
             backup_sha256: &self.backup_sha256,
         };
-        serde_json::to_writer(&mut self.file, &record)?;
-        self.file.write_all(b"\n")?;
-        self.file.flush()?;
+        let mut line = serde_json::to_vec(&record)?;
+        line.push(b'\n');
+        self.file.write_all(&line)?;
+        // `flush` on a File is a no-op; the page cache is lost on power failure, which is exactly
+        // when the last acknowledged step has to survive.
+        self.file.sync_data()?;
         Ok(())
     }
 }

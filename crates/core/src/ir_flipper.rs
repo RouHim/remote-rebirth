@@ -51,6 +51,36 @@ pub(crate) fn parse_flipper(
     }
 }
 
+/// The commands a Flipper file offers, validated with the same rules an import uses.
+///
+/// An entry is listed only when [`flipper_raw_import`] or [`flipper_parsed_import`] accepts it;
+/// a malformed line in the file is reported rather than hidden, so the GUI cannot offer a command
+/// that Compose would later reject.
+pub(crate) fn command_names(text: &str, context: &Context) -> Result<Vec<String>, IrError> {
+    let entries = parse_flipper_entries(text, context)?;
+    // Resolution takes the first entry with a matching name, so list a name only when that first
+    // occurrence is importable; a later valid duplicate cannot be reached by an import.
+    let mut seen = std::collections::HashSet::new();
+    let mut names: Vec<String> = Vec::new();
+    for entry in &entries {
+        let name = entry.name.trim();
+        if name.is_empty() || !seen.insert(name.to_ascii_lowercase()) {
+            continue;
+        }
+        let importable = match entry.kind.as_str() {
+            "raw" => flipper_raw_import(entry, context).is_ok(),
+            "parsed" => flipper_parsed_import(entry, context, None).is_ok(),
+            _ => false,
+        };
+        if importable {
+            names.push(entry.name.clone());
+        }
+    }
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
 fn parse_flipper_entries(text: &str, context: &Context) -> Result<Vec<FlipperEntry>, IrError> {
     let mut entries: Vec<FlipperEntry> = Vec::new();
     for raw_line in text.lines() {

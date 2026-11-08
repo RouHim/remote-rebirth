@@ -6,7 +6,6 @@
 //! provenance the import recorded and a compact summary of the IR Record it became.
 
 use std::collections::BTreeMap;
-use std::fs;
 #[cfg(feature = "cli")]
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -80,8 +79,8 @@ pub fn create(
     let composed = crate::compose_build::build(&model, profile, &imports, &clock.now())?;
 
     let resolved = ResolvedModel::new(&model, profile, &imports, &composed);
-    fs::write(out, &composed.bytes)?;
-    fs::write(&sidecar, serde_json::to_vec_pretty(&resolved)?)?;
+    crate::output::write_file(out, &composed.bytes)?;
+    crate::output::write_file(&sidecar, &serde_json::to_vec_pretty(&resolved)?)?;
     tracing::info!(
         size = composed.bytes.len(),
         devices = composed.devices.len(),

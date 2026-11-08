@@ -19,6 +19,7 @@ use crate::ir_pronto::parse_pronto;
 /// Bit 15 of a duration word: set when the pulse is a mark.
 pub const MARK_BIT: u16 = 0x8000;
 /// Bits 14..0 of a duration word: microseconds.
+#[cfg(test)]
 pub const DURATION_MASK: u16 = 0x7FFF;
 /// The longest interval one duration word can carry.
 pub const MAX_DURATION_US: u32 = 32767;
@@ -181,16 +182,6 @@ pub struct IrPointerGroup {
     pub held: Option<Vec<u16>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tail: Option<Vec<u16>>,
-}
-
-impl IrPointerGroup {
-    pub fn new(once: Vec<u16>, held: Option<Vec<u16>>) -> Self {
-        Self {
-            once,
-            held,
-            tail: None,
-        }
-    }
 }
 
 /// A class-1 IR Record: carrier plus one or two pointer groups of blocks.

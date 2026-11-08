@@ -1081,19 +1081,14 @@ fn derive_watch_tv(
         ))
     })?;
 
-    let mut sends = Vec::new();
-    let mut delays = Vec::new();
-    let mut selected_map = None;
-    let mut visited = vec![false; action_lists.len()];
-    collect_activity(
-        action_list,
-        action_lists,
-        &mut visited,
-        0,
-        &mut sends,
-        &mut delays,
-        &mut selected_map,
-    );
+    let mut walk = ActivityWalk::new(action_lists);
+    walk.collect(action_list, 0);
+    let ActivityWalk {
+        sends,
+        delays,
+        selected_map,
+        ..
+    } = walk;
 
     let instructions = list
         .iter()
@@ -1117,46 +1112,56 @@ fn derive_watch_tv(
     }))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn collect_activity(
-    action_list: u16,
-    action_lists: &[Vec<Instruction>],
-    visited: &mut [bool],
-    depth: usize,
-    sends: &mut Vec<IrReference>,
-    delays: &mut Vec<IrDelay>,
-    selected_map: &mut Option<u8>,
-) {
-    if depth > 16 || visited.get(action_list as usize).copied().unwrap_or(true) {
-        return;
-    }
-    visited[action_list as usize] = true;
-    let Some(list) = action_lists.get(action_list as usize) else {
-        return;
-    };
-    for instruction in list {
-        if let Some(send) = send_of(instruction) {
-            sends.push(send);
-        }
-        if let Some(delay) = delay_of(instruction) {
-            delays.push(delay);
-        }
-        if let Some(map) = select_map_of(instruction) {
-            *selected_map = Some(map);
-        }
-        if instruction.opcode == 0x7F {
-            collect_activity(
-                instruction.operand,
-                action_lists,
-                visited,
-                depth + 1,
-                sends,
-                delays,
-                selected_map,
-            );
+/// What one Action List walk collects.
+struct ActivityWalk<'a> {
+    action_lists: &'a [Vec<Instruction>],
+    visited: Vec<bool>,
+    sends: Vec<IrReference>,
+    delays: Vec<IrDelay>,
+    selected_map: Option<u8>,
+}
+
+impl<'a> ActivityWalk<'a> {
+    fn new(action_lists: &'a [Vec<Instruction>]) -> Self {
+        Self {
+            action_lists,
+            visited: vec![false; action_lists.len()],
+            sends: Vec::new(),
+            delays: Vec::new(),
+            selected_map: None,
         }
     }
-    visited[action_list as usize] = false;
+
+    fn collect(&mut self, action_list: u16, depth: usize) {
+        if depth > 16
+            || self
+                .visited
+                .get(action_list as usize)
+                .copied()
+                .unwrap_or(true)
+        {
+            return;
+        }
+        self.visited[action_list as usize] = true;
+        let Some(list) = self.action_lists.get(action_list as usize) else {
+            return;
+        };
+        for instruction in list {
+            if let Some(send) = send_of(instruction) {
+                self.sends.push(send);
+            }
+            if let Some(delay) = delay_of(instruction) {
+                self.delays.push(delay);
+            }
+            if let Some(map) = select_map_of(instruction) {
+                self.selected_map = Some(map);
+            }
+            if instruction.opcode == 0x7F {
+                self.collect(instruction.operand, depth + 1);
+            }
+        }
+        self.visited[action_list as usize] = false;
+    }
 }
 
 fn send_of(instruction: &Instruction) -> Option<IrReference> {

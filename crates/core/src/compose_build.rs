@@ -1,6 +1,6 @@
 //! Building an Architecture 16 Container from a validated model and its imported IR Records.
 //!
-//! The sections are the ones [`crate::empty::emit_empty`] states, with the model's Devices, key maps,
+//! The sections are the ones the empty configuration states (see the codec tests), with the model's Devices, key maps,
 //! send lists, Watch TV Activity, Favourites, number sender and IR Records filled in. The shapes follow
 //! the MIT-licensed harmony-explorations codec (`families/no-screen/*`): a send list cancels the timers,
 //! sends its record and states a quantity; a device key's press in the key table selects the Device's
@@ -92,6 +92,120 @@ pub fn build(
     imports: &[Vec<Option<ImportedCommand>>],
     built_at: &OffsetDateTime,
 ) -> Result<Composed, Error> {
+    let plan = plan_devices(model, profile, imports)?;
+
+    let mut layout = Layout::new(model.skin, built_at)?;
+
+    // The lists, in index order: the start-up's six, the send events' thirteen, then one send list per
+    // Command in Device order and Command name order, the Watch TV Activity's list and the Favourites'.
+    let mut lists = send_lists(model, imports, &plan)?;
+    let channel_device = channel_device(model)?;
+    let (activity_index, activity) = activity_list(
+        model,
+        &lists.command,
+        &plan,
+        channel_device,
+        lists.pieces.len(),
+    )?;
+    lists.pieces.push(activity);
+    let favourites = favourite_lists(model, profile, &plan, channel_device, &mut lists.pieces)?;
+
+    // The key table: the send events, event 0xFF, one selection per Device Key and Watch TV.
+    let key_table = key_table(&mut layout, &plan, profile, activity_index)?;
+
+    // Each Device's own map, in map order: a press per bound key calling that Command's send list, and
+    // the Favourite presses on the channel Device.
+    let map_indices = device_maps(
+        &mut layout,
+        model,
+        profile,
+        &plan,
+        &lists.command,
+        &favourites,
+        channel_device,
+    )?;
+
+    let tables = Tables {
+        key_table,
+        map_indices,
+        digit_lists: digit_lists(model, channel_device, &lists.command),
+        favourites: favourites.len(),
+    };
+    assemble(
+        &mut layout,
+        model,
+        imports,
+        lists.pieces,
+        built_at,
+        &plan,
+        tables,
+    )
+}
+
+/// What the Container needs before its first piece: the skin, the Device Key order, and the map and
+/// group each Device is numbered by.
+struct DevicePlan<'a> {
+    skin: &'a profile::SkinProfile,
+    group_count: usize,
+    order: Vec<usize>,
+    map_of: Vec<u8>,
+    group_of: Vec<u8>,
+}
+
+/// The lists so far — the start-up's, the send events' and one per sent Command — and each Command's
+/// send list index per Device.
+struct SendLists {
+    pieces: Vec<Piece>,
+    command: Vec<Vec<Option<u16>>>,
+}
+
+/// The pieces the slots name, once the key table and the Device maps are laid out.
+struct Tables {
+    key_table: usize,
+    map_indices: Vec<usize>,
+    digit_lists: [u16; 10],
+    favourites: usize,
+}
+
+/// The action lists and the state records the body slot holds.
+struct Body {
+    list_targets: Vec<usize>,
+    state_record_indices: Vec<usize>,
+}
+
+/// The infrared groups: the pieces the slot holds in front of the group table, the table's own piece,
+/// and each Command's record index per Device.
+struct Infrared {
+    before: Vec<usize>,
+    table: usize,
+    record_indices: Vec<Vec<Option<u8>>>,
+}
+
+/// The piece indices the twelve slots name.
+struct Slots {
+    tree: usize,
+    log: usize,
+    infrared_before: Vec<usize>,
+    infrared: usize,
+    start_up: usize,
+    map_indices: Vec<usize>,
+    key_map: usize,
+    list_table: usize,
+    timers: usize,
+    states: usize,
+    parameter_indices: Vec<usize>,
+    parameter_table: usize,
+    sender_before: Vec<usize>,
+    senders: usize,
+    digits: usize,
+}
+
+/// The skin, the Device Key order and the map and group numbering, before any byte is laid out.
+fn plan_devices<'a>(
+    model: &Model,
+    profile: &'a ModelProfile,
+    imports: &[Vec<Option<ImportedCommand>>],
+) -> Result<DevicePlan<'a>, Error> {
     let skin = profile::skin_profile(profile, model.skin).ok_or_else(|| {
         Error::Validation(format!(
             "skin {} is not accepted by profile '{}'",
@@ -126,12 +240,23 @@ pub fn build(
         group_of[device] = u8::try_from(place)
             .map_err(|_| Error::Internal("a Device Key place exceeds a byte".into()))?;
     }
+    Ok(DevicePlan {
+        skin,
+        group_count,
+        order,
+        map_of,
+        group_of,
+    })
+}
 
-    let mut layout = Layout::new(model.skin, built_at)?;
-
-    // The lists, in index order: the start-up's six, the send events' thirteen, then one send list per
-    // Command in Device order and Command name order, the Watch TV Activity's list and the Favourites'.
-    let start_up_map = order.first().map(|&device| map_of[device]);
+/// The start-up's six lists and the send events' thirteen, then one send list per Command in Device
+/// order and Command name order.
+fn send_lists(
+    model: &Model,
+    imports: &[Vec<Option<ImportedCommand>>],
+    plan: &DevicePlan<'_>,
+) -> Result<SendLists, Error> {
+    let start_up_map = plan.order.first().map(|&device| plan.map_of[device]);
     let mut lists: Vec<Piece> = start_up_lists_with(start_up_map)?;
     lists.extend(send_event_lists()?);
     let mut command_lists: Vec<Vec<Option<u16>>> = Vec::with_capacity(model.devices.len());
@@ -144,7 +269,7 @@ pub fn build(
                 device_imports.len()
             )));
         }
-        let group = u16::from(group_of[command_lists.len()]);
+        let group = u16::from(plan.group_of[command_lists.len()]);
         let mut indices = Vec::with_capacity(device.commands.len());
         let mut record = 0u16;
         for imported in device_imports {
@@ -173,10 +298,15 @@ pub fn build(
         }
         command_lists.push(indices);
     }
+    Ok(SendLists {
+        pieces: lists,
+        command: command_lists,
+    })
+}
 
-    // The channel Device the activity ends in, and the activity's list: each step's power and input
-    // sends, a wait for the step's delay, and the channel Device's map selected at the end.
-    let channel_device = model
+/// The channel Device the Watch TV Activity ends in.
+fn channel_device(model: &Model) -> Result<usize, Error> {
+    model
         .devices
         .iter()
         .position(|device| device.name == model.activity.channel_device)
@@ -185,23 +315,44 @@ pub fn build(
                 "Watch TV Activity names missing channel Device '{}'",
                 model.activity.channel_device
             ))
-        })?;
-    let activity_index = u16::try_from(lists.len())
+        })
+}
+
+/// The activity's list: each step's power and input sends, a wait for the step's delay, and the
+/// channel Device's map selected at the end. The index is the list's place in the list table.
+fn activity_list(
+    model: &Model,
+    command_lists: &[Vec<Option<u16>>],
+    plan: &DevicePlan<'_>,
+    channel_device: usize,
+    lists_len: usize,
+) -> Result<(u16, Piece), Error> {
+    let activity_index = u16::try_from(lists_len)
         .map_err(|_| Error::Validation("the action list table overflows a u16".into()))?;
-    lists.push(Piece::new(
+    let piece = Piece::new(
         action_list_bytes(&activity_body(
             model,
             &model.activity,
-            &command_lists,
-            &group_of,
-            map_of[channel_device],
+            command_lists,
+            &plan.group_of,
+            plan.map_of[channel_device],
         )?)?,
         "slot-10-list",
-    ));
+    );
+    Ok((activity_index, piece))
+}
 
-    // The Favourites, positional from 1: a number load handed to number sender record 0, bound on the
-    // channel Device's own map. The number sender's digit tables call the channel Device's digit send
-    // lists, which its `number_*` keys name.
+/// The Favourites, positional from 1: a number load handed to number sender record 0, bound on the
+/// channel Device's own map. The number sender's digit tables call the channel Device's digit send
+/// lists, which its `number_*` keys name. Returns each Favourite's scan and list index.
+fn favourite_lists(
+    model: &Model,
+    profile: &ModelProfile,
+    plan: &DevicePlan<'_>,
+    channel_device: usize,
+    lists: &mut Vec<Piece>,
+) -> Result<Vec<(u8, u16)>, Error> {
+    let skin = plan.skin;
     let mut favourites: Vec<(u8, u16)> = Vec::new();
     if !model.favourites.is_empty() {
         let channel = &model.devices[channel_device];
@@ -244,15 +395,23 @@ pub fn build(
             favourites.push((scan, index));
         }
     }
+    Ok(favourites)
+}
 
-    // The key table: the send events, event 0xFF, one selection per Device Key and Watch TV.
+/// The key table: the send events, event 0xFF, one selection per Device Key and Watch TV.
+fn key_table(
+    layout: &mut Layout,
+    plan: &DevicePlan<'_>,
+    profile: &ModelProfile,
+    activity_index: u16,
+) -> Result<usize, Error> {
     let mut key_entries: Vec<TaggedEntry> = send_event_entries();
     key_entries.push(acknowledging_entry());
-    for &device in &order {
-        let place = usize::from(group_of[device]);
+    for &device in &plan.order {
+        let place = usize::from(plan.group_of[device]);
         key_entries.push(TaggedEntry {
             tag: PRESS | profile.device_key_scans[place],
-            operand: SELECT_MAP_MASK | u16::from(map_of[device]),
+            operand: SELECT_MAP_MASK | u16::from(plan.map_of[device]),
             opcode: SELECT_MAP,
         });
     }
@@ -266,128 +425,257 @@ pub fn build(
         "raw-6-key-table",
     ));
     layout.set_key_table(key_table);
+    Ok(key_table)
+}
 
-    // Each Device's own map, in map order: a press per bound key calling that Command's send list, and
-    // the Favourite presses on the channel Device.
-    let mut map_indices = Vec::with_capacity(order.len());
-    for &device in &order {
+/// Each Device's own map, in map order: a press per bound key calling that Command's send list, the
+/// routing copies, and the Favourite presses on the channel Device.
+fn device_maps(
+    layout: &mut Layout,
+    model: &Model,
+    profile: &ModelProfile,
+    plan: &DevicePlan<'_>,
+    command_lists: &[Vec<Option<u16>>],
+    favourites: &[(u8, u16)],
+    channel_device: usize,
+) -> Result<Vec<usize>, Error> {
+    let mut map_indices = Vec::with_capacity(plan.order.len());
+    for &device in &plan.order {
         let mut entries: Vec<MapEntry> = Vec::new();
-        for (key, command) in &model.devices[device].keys {
-            let scan = profile::key_scan(profile, key).ok_or_else(|| {
-                Error::Validation(format!(
-                    "Device '{}' binds key '{key}', which profile '{}' has no scan code for",
-                    model.devices[device].name, profile.id
-                ))
-            })?;
-            let command_index = model.devices[device]
-                .commands
-                .keys()
-                .position(|name| name == command)
-                .ok_or_else(|| {
-                    Error::Validation(format!(
-                        "Device '{}' binds key '{key}' to missing Command '{command}'",
-                        model.devices[device].name
-                    ))
-                })?;
-            entries.push(MapEntry {
-                entry: TaggedEntry {
-                    tag: PRESS | scan,
-                    operand: command_lists[device][command_index].ok_or_else(|| {
-                        Error::Internal(format!(
-                            "Device '{}' binds key '{key}' to a Command with no send list",
-                            model.devices[device].name
-                        ))
-                    })?,
-                    opcode: CALL,
-                },
-                label: format!("key '{key}'"),
-            });
-        }
-        if let Some(routing) = &model.routing {
-            for (function, target, keys) in [
-                (
-                    "volume",
-                    routing.volume.as_deref(),
-                    crate::model::Routing::VOLUME_KEYS,
-                ),
-                (
-                    "channel",
-                    routing.channel.as_deref(),
-                    crate::model::Routing::CHANNEL_KEYS,
-                ),
-            ] {
-                let Some(target) = target else { continue };
-                let target_device = model
-                    .devices
-                    .iter()
-                    .position(|candidate| candidate.name == target)
-                    .ok_or_else(|| {
-                        Error::Validation(format!(
-                            "routing {function} names missing Device '{target}'"
-                        ))
-                    })?;
-                if target_device == device {
-                    continue;
-                }
-                for key in keys {
-                    let command = model.devices[target_device].keys.get(*key).ok_or_else(|| {
-                        Error::Validation(format!(
-                            "routing {function} targets Device '{target}', which does not bind \
-                             key '{key}'"
-                        ))
-                    })?;
-                    let command_index = model.devices[target_device]
-                        .commands
-                        .keys()
-                        .position(|name| name == command)
-                        .ok_or_else(|| {
-                            Error::Validation(format!(
-                                "routing {function} targets Device '{target}', whose key '{key}' \
-                                 names missing Command '{command}'"
-                            ))
-                        })?;
-                    let scan = profile::key_scan(profile, key).ok_or_else(|| {
-                        Error::Validation(format!(
-                            "routing {function} names key '{key}', which profile '{}' has no scan \
-                             code for",
-                            profile.id
-                        ))
-                    })?;
-                    entries.push(MapEntry {
-                        entry: TaggedEntry {
-                            tag: PRESS | scan,
-                            operand: command_lists[target_device][command_index].ok_or_else(
-                                || {
-                                    Error::Internal(format!(
-                                        "routing {function} targets Device '{target}', whose key \
-                                     '{key}' has no send list"
-                                    ))
-                                },
-                            )?,
-                            opcode: CALL,
-                        },
-                        label: format!("key '{key}' inherited from '{target}'"),
-                    });
-                }
-            }
-        }
-        if device == channel_device {
-            for (favourite, &(scan, list)) in model.favourites.iter().zip(&favourites) {
-                entries.push(MapEntry {
-                    entry: TaggedEntry {
-                        tag: PRESS | scan,
-                        operand: list,
-                        opcode: CALL,
-                    },
-                    label: format!("Favourite key {}", favourite.key),
-                });
-            }
-        }
+        bound_key_entries(model, profile, command_lists, device, &mut entries)?;
+        routing_entries(model, profile, command_lists, device, &mut entries)?;
+        favourite_entries(model, favourites, channel_device, device, &mut entries);
         let ordered = compiler_ordered(entries, &model.devices[device].name)?;
         map_indices.push(layout.add(Piece::new(tagged_list_bytes(&ordered)?, "raw-6-map")));
     }
+    Ok(map_indices)
+}
 
-    // The body: every action list by index, then the state records.
+/// A press per key the Device binds, calling that Command's send list.
+fn bound_key_entries(
+    model: &Model,
+    profile: &ModelProfile,
+    command_lists: &[Vec<Option<u16>>],
+    device: usize,
+    entries: &mut Vec<MapEntry>,
+) -> Result<(), Error> {
+    for (key, command) in &model.devices[device].keys {
+        let scan = profile::key_scan(profile, key).ok_or_else(|| {
+            Error::Validation(format!(
+                "Device '{}' binds key '{key}', which profile '{}' has no scan code for",
+                model.devices[device].name, profile.id
+            ))
+        })?;
+        let command_index = model.devices[device]
+            .commands
+            .keys()
+            .position(|name| name == command)
+            .ok_or_else(|| {
+                Error::Validation(format!(
+                    "Device '{}' binds key '{key}' to missing Command '{command}'",
+                    model.devices[device].name
+                ))
+            })?;
+        entries.push(MapEntry {
+            entry: TaggedEntry {
+                tag: PRESS | scan,
+                operand: command_lists[device][command_index].ok_or_else(|| {
+                    Error::Internal(format!(
+                        "Device '{}' binds key '{key}' to a Command with no send list",
+                        model.devices[device].name
+                    ))
+                })?,
+                opcode: CALL,
+            },
+            label: format!("key '{key}'"),
+        });
+    }
+    Ok(())
+}
+
+/// The routing copies: each global function's keys call the target Device's send list.
+fn routing_entries(
+    model: &Model,
+    profile: &ModelProfile,
+    command_lists: &[Vec<Option<u16>>],
+    device: usize,
+    entries: &mut Vec<MapEntry>,
+) -> Result<(), Error> {
+    if let Some(routing) = &model.routing {
+        for (function, target, keys) in [
+            (
+                "volume",
+                routing.volume.as_deref(),
+                crate::model::Routing::VOLUME_KEYS,
+            ),
+            (
+                "channel",
+                routing.channel.as_deref(),
+                crate::model::Routing::CHANNEL_KEYS,
+            ),
+        ] {
+            let Some(target) = target else { continue };
+            let target_device = routing_target(model, function, target)?;
+            if target_device == device {
+                continue;
+            }
+            for key in keys {
+                entries.push(routing_entry(
+                    model,
+                    profile,
+                    command_lists,
+                    function,
+                    target,
+                    target_device,
+                    key,
+                )?);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The Device a routing function names.
+fn routing_target(model: &Model, function: &str, target: &str) -> Result<usize, Error> {
+    model
+        .devices
+        .iter()
+        .position(|candidate| candidate.name == target)
+        .ok_or_else(|| {
+            Error::Validation(format!(
+                "routing {function} names missing Device '{target}'"
+            ))
+        })
+}
+
+/// One routing key: the target Device's send list called under the key's scan.
+fn routing_entry(
+    model: &Model,
+    profile: &ModelProfile,
+    command_lists: &[Vec<Option<u16>>],
+    function: &str,
+    target: &str,
+    target_device: usize,
+    key: &str,
+) -> Result<MapEntry, Error> {
+    let command = model.devices[target_device].keys.get(key).ok_or_else(|| {
+        Error::Validation(format!(
+            "routing {function} targets Device '{target}', which does not bind \
+             key '{key}'"
+        ))
+    })?;
+    let command_index = model.devices[target_device]
+        .commands
+        .keys()
+        .position(|name| name == command)
+        .ok_or_else(|| {
+            Error::Validation(format!(
+                "routing {function} targets Device '{target}', whose key '{key}' \
+                 names missing Command '{command}'"
+            ))
+        })?;
+    let scan = profile::key_scan(profile, key).ok_or_else(|| {
+        Error::Validation(format!(
+            "routing {function} names key '{key}', which profile '{}' has no scan \
+             code for",
+            profile.id
+        ))
+    })?;
+    Ok(MapEntry {
+        entry: TaggedEntry {
+            tag: PRESS | scan,
+            operand: command_lists[target_device][command_index].ok_or_else(|| {
+                Error::Internal(format!(
+                    "routing {function} targets Device '{target}', whose key \
+                     '{key}' has no send list"
+                ))
+            })?,
+            opcode: CALL,
+        },
+        label: format!("key '{key}' inherited from '{target}'"),
+    })
+}
+
+/// The Favourite presses, bound on the channel Device's own map.
+fn favourite_entries(
+    model: &Model,
+    favourites: &[(u8, u16)],
+    channel_device: usize,
+    device: usize,
+    entries: &mut Vec<MapEntry>,
+) {
+    if device == channel_device {
+        for (favourite, &(scan, list)) in model.favourites.iter().zip(favourites) {
+            entries.push(MapEntry {
+                entry: TaggedEntry {
+                    tag: PRESS | scan,
+                    operand: list,
+                    opcode: CALL,
+                },
+                label: format!("Favourite key {}", favourite.key),
+            });
+        }
+    }
+}
+
+/// The body, the tables and the slots, then the check that the finished Container parses.
+fn assemble(
+    layout: &mut Layout,
+    model: &Model,
+    imports: &[Vec<Option<ImportedCommand>>],
+    lists: Vec<Piece>,
+    built_at: &OffsetDateTime,
+    plan: &DevicePlan<'_>,
+    tables: Tables,
+) -> Result<Composed, Error> {
+    let body = body(layout, lists, built_at)?;
+    let tree = layout.add(name_tree());
+    let log = layout.add(log_area());
+    let infrared = infrared(layout, model, imports, plan)?;
+
+    let start_up = layout.add(start_up_table()?);
+    let mut key_map_targets = Vec::with_capacity(tables.map_indices.len() + 1);
+    key_map_targets.push(tables.key_table);
+    key_map_targets.extend_from_slice(&tables.map_indices);
+    let key_map = layout.add(counted_table(1, &key_map_targets, "raw-6-table")?);
+    let list_table = layout.add(counted_table(2, &body.list_targets, "raw-7-table")?);
+    let timers = layout.add(counted_table(1, &[], "raw-8-table")?);
+    let states = layout.add(state_table(&body.state_record_indices)?);
+
+    let (parameter_indices, parameter_table) = parameters(layout)?;
+    let (sender_before, senders, digits) = digit_tables(layout, model, &tables.digit_lists)?;
+
+    place_slots(
+        layout,
+        Slots {
+            tree,
+            log,
+            infrared_before: infrared.before,
+            infrared: infrared.table,
+            start_up,
+            map_indices: tables.map_indices,
+            key_map,
+            list_table,
+            timers,
+            states,
+            parameter_indices,
+            parameter_table,
+            sender_before,
+            senders,
+            digits,
+        },
+    )?;
+    finish(
+        layout,
+        model,
+        plan,
+        &infrared.record_indices,
+        tables.favourites,
+    )
+}
+
+/// The body: every action list by index, then the state records.
+fn body(layout: &mut Layout, lists: Vec<Piece>, built_at: &OffsetDateTime) -> Result<Body, Error> {
     let list_count = lists.len();
     let mut body = Vec::with_capacity(list_count);
     for piece in lists {
@@ -401,13 +689,21 @@ pub fn build(
     }
     body.extend_from_slice(&state_record_indices);
     layout.set_body(body);
+    Ok(Body {
+        list_targets,
+        state_record_indices,
+    })
+}
 
-    let tree = layout.add(name_tree());
-    let log = layout.add(log_area());
-
-    // The infrared groups: one piece per group holding its record count and pointers, one two-piece
-    // record per Command, then the group table the slot names.
-    let mut group_records: Vec<Vec<(usize, usize)>> = vec![Vec::new(); group_count];
+/// The infrared groups: one piece per group holding its record count and pointers, one two-piece
+/// record per Command, then the group table the slot names.
+fn infrared(
+    layout: &mut Layout,
+    model: &Model,
+    imports: &[Vec<Option<ImportedCommand>>],
+    plan: &DevicePlan<'_>,
+) -> Result<Infrared, Error> {
+    let mut group_records: Vec<Vec<(usize, usize)>> = vec![Vec::new(); plan.group_count];
     let mut record_indices: Vec<Vec<Option<u8>>> = vec![Vec::new(); model.devices.len()];
     let mut record_pieces = Vec::new();
     for (device, device_imports) in imports.iter().enumerate() {
@@ -423,8 +719,8 @@ pub fn build(
                     model.devices[device].name
                 ))
             })?;
-            let (data, header, header_offset) = add_record(&mut layout, &imported.record)?;
-            group_records[usize::from(group_of[device])].push((data, header_offset));
+            let (data, header, header_offset) = add_record(layout, &imported.record)?;
+            group_records[usize::from(plan.group_of[device])].push((data, header_offset));
             record_pieces.push(data);
             record_pieces.push(header);
             record_indices[device].push(Some(slot));
@@ -433,37 +729,42 @@ pub fn build(
                 .ok_or_else(|| Error::Validation("too many sent Commands".into()))?;
         }
     }
-    let mut group_indices = Vec::with_capacity(group_count);
+    let mut group_indices = Vec::with_capacity(plan.group_count);
     for records in &group_records {
         group_indices.push(layout.add(group_piece(records)?));
     }
-    let mut infrared_before = group_indices.clone();
-    infrared_before.extend_from_slice(&record_pieces);
-    let infrared = layout.add(counted_table(1, &group_indices, "raw-4-table")?);
+    let mut before = group_indices.clone();
+    before.extend_from_slice(&record_pieces);
+    let table = layout.add(counted_table(1, &group_indices, "raw-4-table")?);
+    Ok(Infrared {
+        before,
+        table,
+        record_indices,
+    })
+}
 
-    let start_up = layout.add(start_up_table()?);
-    let mut key_map_targets = Vec::with_capacity(map_indices.len() + 1);
-    key_map_targets.push(key_table);
-    key_map_targets.extend_from_slice(&map_indices);
-    let key_map = layout.add(counted_table(1, &key_map_targets, "raw-6-table")?);
-    let list_table = layout.add(counted_table(2, &list_targets, "raw-7-table")?);
-    let timers = layout.add(counted_table(1, &[], "raw-8-table")?);
-    let states = layout.add(state_table(&state_record_indices)?);
-
+/// The parameter block: one piece per group, then the table the slot names.
+fn parameters(layout: &mut Layout) -> Result<(Vec<usize>, usize), Error> {
     let parameters = parameter_groups()?;
     let mut parameter_indices = Vec::with_capacity(parameters.len());
     for piece in parameters {
         parameter_indices.push(layout.add(piece));
     }
     let parameter_table = layout.add(counted_table(1, &parameter_indices, "raw-10-table")?);
+    Ok((parameter_indices, parameter_table))
+}
 
-    // The number sender: an empty table, or one record and its three digit tables when Favourites exist.
+/// The number sender: an empty table, or one record and its three digit tables when Favourites exist.
+fn digit_tables(
+    layout: &mut Layout,
+    model: &Model,
+    digit_lists: &[u16; 10],
+) -> Result<(Vec<usize>, usize, usize), Error> {
     let mut sender_before = Vec::new();
     let senders = if model.favourites.is_empty() {
         layout.add(number_sender_table(&[])?)
     } else {
-        let digit_lists = digit_lists(model, channel_device, &command_lists);
-        let table_piece = digit_table_bytes(&digit_lists);
+        let table_piece = digit_table_bytes(digit_lists);
         let mut tables = Vec::with_capacity(DIGIT_TABLE_COUNT);
         for _ in 0..DIGIT_TABLE_COUNT {
             tables.push(layout.add(Piece::new(table_piece.clone(), "slot-16-digit-table")));
@@ -474,19 +775,36 @@ pub fn build(
         layout.add(number_sender_table(&[record])?)
     };
     let digits = layout.add(digit_entry_table());
+    Ok((sender_before, senders, digits))
+}
 
-    layout.place(0, Placement::new(Vec::new(), tree))?;
-    layout.place(2, Placement::new(Vec::new(), log))?;
-    layout.place(4, Placement::new(infrared_before, infrared))?;
-    layout.place(5, Placement::new(Vec::new(), start_up))?;
-    layout.place(6, Placement::new(map_indices.clone(), key_map))?;
-    layout.place(7, Placement::new(Vec::new(), list_table))?;
-    layout.place(8, Placement::new(Vec::new(), timers))?;
-    layout.place(9, Placement::new(Vec::new(), states))?;
-    layout.place(10, Placement::new(parameter_indices, parameter_table))?;
-    layout.place(11, Placement::new(sender_before, senders))?;
-    layout.place(12, Placement::new(Vec::new(), digits))?;
+/// Place every slot the composed Container states: the pieces the slot holds, then the table itself.
+fn place_slots(layout: &mut Layout, slots: Slots) -> Result<(), Error> {
+    layout.place(0, Placement::new(Vec::new(), slots.tree))?;
+    layout.place(2, Placement::new(Vec::new(), slots.log))?;
+    layout.place(4, Placement::new(slots.infrared_before, slots.infrared))?;
+    layout.place(5, Placement::new(Vec::new(), slots.start_up))?;
+    layout.place(6, Placement::new(slots.map_indices.clone(), slots.key_map))?;
+    layout.place(7, Placement::new(Vec::new(), slots.list_table))?;
+    layout.place(8, Placement::new(Vec::new(), slots.timers))?;
+    layout.place(9, Placement::new(Vec::new(), slots.states))?;
+    layout.place(
+        10,
+        Placement::new(slots.parameter_indices, slots.parameter_table),
+    )?;
+    layout.place(11, Placement::new(slots.sender_before, slots.senders))?;
+    layout.place(12, Placement::new(Vec::new(), slots.digits))?;
+    Ok(())
+}
 
+/// Lay the pieces out, check the trailer, and parse the result back.
+fn finish(
+    layout: &mut Layout,
+    model: &Model,
+    plan: &DevicePlan<'_>,
+    record_indices: &[Vec<Option<u8>>],
+    favourites: usize,
+) -> Result<Composed, Error> {
     let bytes = layout.lay_out()?;
     if validation_status(&bytes) != ValidationStatus::Ok {
         return Err(Error::Internal(
@@ -504,12 +822,12 @@ pub fn build(
             .iter()
             .enumerate()
             .map(|(device, _model)| ComposedDevice {
-                ir_group: group_of[device],
-                map_index: map_of[device],
+                ir_group: plan.group_of[device],
+                map_index: plan.map_of[device],
                 record_indices: record_indices[device].clone(),
             })
             .collect(),
-        favourites: favourites.len(),
+        favourites,
     })
 }
 

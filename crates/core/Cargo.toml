@@ -2,6 +2,7 @@
 name = "remote-rebirth-core"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Offline configuration core for the Logitech Harmony 300"
 

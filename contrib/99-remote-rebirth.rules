@@ -1,7 +1,16 @@
-# Logitech Harmony 300/350 USB identity
-# Gives the wheel group read/write access to the Remote without root. This works
-# for local seats and for headless/SSH sessions; replace wheel with your group.
-SUBSYSTEM=="usb", ATTR{idVendor}=="046d", ATTR{idProduct}=="c124", MODE="0660", GROUP="wheel"
+# Logitech Harmony USB identity
+# Gives the dedicated remote-rebirth group read/write access to the Remote without root.
+# Group setup: sudo groupadd -f remote-rebirth && sudo usermod -aG remote-rebirth $USER
+# Works for local seats and for headless/SSH sessions once the user has re-logged in.
+# Wheel members may substitute GROUP="wheel" above if they accept that every
+# administrator then gets raw HID write access.
+#
+# c124 is the Harmony 300/350. c125 is the Harmony 200: Detect opens it to read
+# /sys/sysinfo and then reports the model as unsupported, so it needs the same
+# access to produce that message instead of a permission error.
+SUBSYSTEM=="usb", ATTR{idVendor}=="046d", ATTR{idProduct}=="c124", MODE="0660", GROUP="remote-rebirth"
+SUBSYSTEM=="usb", ATTR{idVendor}=="046d", ATTR{idProduct}=="c125", MODE="0660", GROUP="remote-rebirth"
 
 # The hidraw node, if the transport uses the kernel HID driver.
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c124", MODE="0660", GROUP="wheel"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c124", MODE="0660", GROUP="remote-rebirth"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c125", MODE="0660", GROUP="remote-rebirth"

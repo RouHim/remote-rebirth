@@ -223,12 +223,12 @@ The v1 rule “every declared Command must be referenced” is replaced:
 
 - App data directory: `$XDG_DATA_HOME/remote-rebirth/` with `$HOME/.local/share/remote-rebirth/` fallback.
 - `model.json`: the active Model v2, the portable interchange artifact.
-- `gui.json`: GUI-only state (window size, last selections, library provenance, recents).
+- `gui.json`: the GUI-only state that ships today, and the whole of it: `page` (the selected chapter), `selected_device`, `selected_key`, `reboot` (the commit-time reboot toggle), `advanced` (show technical details) and `library_dir` (the folder the Library browser scans, defaulting to `ir-library/`). There is no separate `settings.json`; the two toggles live here because they are GUI-only preferences.
 - `backups/`: managed Backup Containers and sidecars; keep all, manual delete.
-- `ir-library/`: pinned Flipper-IRDB archive, extracted index and version marker.
-- `settings.json`: user preferences, including whether the IR Library download was accepted.
+- `ir-library/`: the default folder the Library browser scans. Nothing is downloaded into it yet.
 - Autosave writes atomically (temporary file plus rename). Export writes a standalone Model JSON; Import validates before replacing the active Model.
 - The Journal remains at `$XDG_STATE_HOME/remote-rebirth/journal.jsonl`, shared with the CLI.
+- Not yet implemented and owned by the downloader slice: persisted window geometry, IR Library provenance, a recents list, download consent, and the pinned `ir-library/` archive with its extracted index and version marker. Do not treat them as shipped state.
 
 ## Delivery Slice
 
@@ -236,7 +236,7 @@ The first shippable GUI is the end-to-end thin slice, not the full editor:
 
 - Core prerequisites: workspace split, Model v2 routing, unreferenced-Command filtering, typed operations and progress events.
 - GUI slice: Detect, Backup now, one Device created from a local Pronto/LIRC/Flipper file or inline hex, Key Map with the schematic diagram, table, command palette and volume/channel Routing, Compose, Prepare, Commit, Read-Back and Restore.
-- The IR Library downloader and browser, Favourites polish and Activity polish follow in the next slice. Local file/hex import is available in the first slice, so no library is required to prove the path.
+- The IR Library browser for a local folder is shipped; what follows in the next slice is the pinned IR Library downloader and the browser for its downloaded archive, plus Favourites polish and Activity polish. Local file/hex import is available in the first slice, so no library is required to prove the path.
 
 ## Testing and Acceptance
 

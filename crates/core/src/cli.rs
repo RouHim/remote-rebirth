@@ -1,5 +1,5 @@
 use std::ffi::OsString;
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, error::ErrorKind};
@@ -8,9 +8,10 @@ use crate::backup;
 use crate::compose;
 use crate::detect;
 use crate::error::{Error, Exit};
+use crate::progress::Progress;
 use crate::restore;
 use crate::runtime::Runtime;
-use crate::write::{self, Options};
+use crate::write;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -198,35 +199,58 @@ fn dispatch(command: Command, runtime: &mut Runtime<'_>) -> Result<(), Error> {
             commit,
             no_reboot,
             json,
-        } => write::run(
-            &mut **backend,
-            &**clock,
-            state_dir,
-            &container,
-            &backup,
-            Options {
-                commit,
-                no_reboot,
+        } => {
+            let mut progress = progress_sink();
+            write::run(
+                &mut **backend,
+                &**clock,
+                crate::write::WriteRequest {
+                    state_dir,
+                    container_path: &container,
+                    backup_path: &backup,
+                    commit,
+                    no_reboot,
+                },
                 json,
-            },
-            &mut **stdout,
-        ),
+                &mut **stdout,
+                &mut progress,
+            )
+        }
         Command::Restore {
             backup,
             commit,
             no_reboot,
             json,
-        } => restore::run(
-            &mut **backend,
-            &**clock,
-            state_dir,
-            &backup,
-            Options {
-                commit,
-                no_reboot,
+        } => {
+            let mut progress = progress_sink();
+            restore::run(
+                &mut **backend,
+                &**clock,
+                crate::restore::RestoreRequest {
+                    state_dir,
+                    backup_path: &backup,
+                    commit,
+                    no_reboot,
+                },
                 json,
-            },
-            &mut **stdout,
-        ),
+                &mut **stdout,
+                &mut progress,
+            )
+        }
+    }
+}
+
+/// Render Write and Restore progress to stderr, and only when stderr is a terminal, so a piped
+/// transcript stays clean.
+fn progress_sink() -> impl FnMut(Progress) {
+    let interactive = std::io::stderr().is_terminal();
+    move |event| {
+        if !interactive {
+            return;
+        }
+        match event {
+            Progress::Step(step) => eprintln!("{step}"),
+            Progress::Written { bytes, total } => eprintln!("{bytes}/{total} bytes"),
+        }
     }
 }

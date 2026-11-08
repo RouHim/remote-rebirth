@@ -323,6 +323,24 @@ pub fn for_identity(architecture: Option<u8>, skin: Option<u8>) -> Option<&'stat
     })
 }
 
+/// True when a detected firmware shares the profile's measured major.minor version.
+///
+/// The write sequence is only verified on the measured version, so callers warn when this is
+/// false rather than refusing an otherwise supported Remote.
+pub fn firmware_matches(profile: &ModelProfile, detected: Option<&str>) -> bool {
+    fn major_minor(value: &str) -> Option<(u32, u32)> {
+        let mut parts = value.trim().split('.');
+        Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
+    }
+    match (
+        major_minor(profile.firmware),
+        detected.and_then(major_minor),
+    ) {
+        (Some(expected), Some(found)) => expected == found,
+        _ => detected == Some(profile.firmware),
+    }
+}
+
 /// The Model Profile whose architecture states `skin`, or the first profile whose skins include it.
 pub fn for_skin(skin: u8) -> Option<&'static ModelProfile> {
     all().find(|profile| profile.skins.iter().any(|entry| entry.skin == skin))
@@ -363,6 +381,7 @@ pub fn favourite_key(profile: &ModelProfile, skin: u8, scan: u8) -> Option<u8> {
 ///
 /// Skins 78 and 79 are the Harmony 300's two printings, with four groups; skin 104 is the Harmony
 /// 350, with eight. Any other skin is refused by the caller, which names the skins that are known.
+#[cfg(test)]
 pub fn empty_ir_groups(skin: u8) -> Option<usize> {
     all()
         .flat_map(|profile| profile.skins)
@@ -378,4 +397,5 @@ pub fn empty_ir_groups(skin: u8) -> Option<usize> {
 
 /// The measured allocations of skins whose model has no profile yet. Only the empty configuration
 /// needs them, because it states a group count but no capability.
+#[cfg(test)]
 const UNPROFILED_SKIN_IR_GROUPS: &[(u8, usize)] = &[(104, 8)];
