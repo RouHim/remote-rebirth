@@ -501,3 +501,154 @@ fn inspect_rejects_a_container_stating_another_architecture() {
     assert!(stdout.is_empty(), "{stdout}");
     assert!(stderr.contains("expected 16"), "{stderr}");
 }
+
+fn u24_at(bytes: &[u8], at: usize) -> u32 {
+    u32::from(bytes[at]) | u32::from(bytes[at + 1]) << 8 | u32::from(bytes[at + 2]) << 16
+}
+
+fn ir_database_offset(bytes: &[u8]) -> usize {
+    let slot = 0x0B + 4 * 4;
+    (u24_at(bytes, slot + 1) - BASE) as usize
+}
+
+fn ir_group_offset(bytes: &[u8]) -> usize {
+    (u24_at(bytes, ir_database_offset(bytes) + 1) - BASE) as usize
+}
+
+fn ir_record_offset(bytes: &[u8]) -> usize {
+    (u24_at(bytes, ir_group_offset(bytes) + 3) - BASE) as usize - 7
+}
+
+fn inspect_rejects(mut bytes: Vec<u8>) -> String {
+    let directory = tempfile::tempdir().expect("tempdir");
+    seal(&mut bytes);
+    let path = write_container(&directory, &bytes);
+    let (exit, stdout, stderr) = run_inspect(&path, &["--json"]);
+    assert_eq!(exit, Exit(4));
+    assert!(stdout.is_empty(), "{stdout}");
+    stderr
+}
+
+#[test]
+fn inspect_rejects_a_broken_header_marker() {
+    let mut bytes = sample_container();
+    bytes[0x47] = b'X';
+    let stderr = inspect_rejects(bytes);
+    assert!(stderr.contains("LWJL"), "{stderr}");
+}
+
+#[test]
+fn inspect_rejects_a_missing_end_marker() {
+    let mut bytes = sample_container();
+    let len = bytes.len();
+    bytes[len - 4..].copy_from_slice(b"XYYY");
+    let stderr = inspect_rejects(bytes);
+    assert!(stderr.contains("PTYY"), "{stderr}");
+}
+
+#[test]
+fn inspect_rejects_a_wrong_end_address() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let mut bytes = sample_container();
+    let end_addr = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) + 1;
+    bytes[4..8].copy_from_slice(&end_addr.to_le_bytes());
+    let path = write_container(&directory, &bytes);
+    let (exit, stdout, stderr) = run_inspect(&path, &["--json"]);
+    assert_eq!(exit, Exit(4));
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(stderr.contains("end_addr"), "{stderr}");
+}
+
+#[test]
+fn inspect_rejects_a_nonzero_section_spare_byte() {
+    let mut bytes = sample_container();
+    bytes[0x0B] = 1;
+    let stderr = inspect_rejects(bytes);
+    assert!(stderr.contains("spare byte"), "{stderr}");
+}
+
+#[test]
+fn inspect_rejects_descending_section_pointers() {
+    let mut bytes = sample_container();
+    let first = [bytes[0x10], bytes[0x11], bytes[0x12]];
+    let second = [bytes[0x14], bytes[0x15], bytes[0x16]];
+    bytes[0x10..0x13].copy_from_slice(&second);
+    bytes[0x14..0x17].copy_from_slice(&first);
+    let stderr = inspect_rejects(bytes);
+    assert!(stderr.contains("must ascend"), "{stderr}");
+}
+
+#[test]
+fn inspect_rejects_an_architecture_record_that_disagrees_with_itself() {
+    let mut bytes = sample_container();
+    let offset = (u24_at(&bytes, 0x10) - BASE) as usize;
+    bytes[offset + 1] = 17;
+    let stderr = inspect_rejects(bytes);
+    assert!(stderr.contains("one architecture twice"), "{stderr}");
+}
+
+#[test]
+fn inspect_rejects_a_truncated_architecture_record() {
+    let mut bytes = sample_container();
+    let architecture = u24_at(&bytes, 0x10);
+    let shortened = architecture + 3;
+    set_u24(&mut bytes, 0x14, shortened);
+    let stderr = inspect_rejects(bytes);
+    assert!(stderr.contains("too short"), "{stderr}");
+}
+
+#[test]
+fn inspect_rejects_a_key_table_that_overruns_the_trailer() {
+    let mut bytes = sample_container();
+    bytes[0x4B] = 0xFF;
+    let stderr = inspect_rejects(bytes);
+    assert!(stderr.contains("overruns the trailer"), "{stderr}");
+}
+
+#[test]
+fn inspect_rejects_a_null_infrared_group() {
+    let mut bytes = sample_container();
+    let database = ir_database_offset(&bytes);
+    set_u24(&mut bytes, database + 1, 0);
+    let stderr = inspect_rejects(bytes);
+    assert!(stderr.contains("infrared group 0 is NULL"), "{stderr}");
+}
+
+#[test]
+fn inspect_rejects_an_infrared_group_spare_byte() {
+    let mut bytes = sample_container();
+    let group = ir_group_offset(&bytes);
+    bytes[group] = 1;
+    let stderr = inspect_rejects(bytes);
+    assert!(stderr.contains("spare byte"), "{stderr}");
+}
+
+#[test]
+fn inspect_rejects_a_null_infrared_record_pointer() {
+    let mut bytes = sample_container();
+    let group = ir_group_offset(&bytes);
+    set_u24(&mut bytes, group + 3, 0);
+    let stderr = inspect_rejects(bytes);
+    assert!(
+        stderr.contains("infrared record 0 of group 0 is NULL"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn inspect_rejects_an_infrared_table_that_overruns_its_section() {
+    let mut bytes = sample_container();
+    let database = ir_database_offset(&bytes);
+    bytes[database] = 0xFF;
+    let stderr = inspect_rejects(bytes);
+    assert!(stderr.contains("overruns its section"), "{stderr}");
+}
+
+#[test]
+fn inspect_rejects_an_infrared_record_with_a_null_own_start() {
+    let mut bytes = sample_container();
+    let record = ir_record_offset(&bytes);
+    set_u24(&mut bytes, record + 8, 0);
+    let stderr = inspect_rejects(bytes);
+    assert!(stderr.contains("NULL own start"), "{stderr}");
+}

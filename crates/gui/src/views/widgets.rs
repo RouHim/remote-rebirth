@@ -201,6 +201,32 @@ pub(super) fn errata(app: &App, error: &str) -> Element<'static, Message> {
     .into()
 }
 
+/// A non-error warning banner with a dismiss action.
+pub(super) fn notice(label: &str, message: &str, on_dismiss: Message) -> Element<'static, Message> {
+    container(
+        row![
+            column![
+                text(label.to_uppercase())
+                    .font(t::mono(Weight::Medium))
+                    .size(8)
+                    .color(t::OXIDE_DARK),
+                text(message.to_string())
+                    .font(t::sans(Weight::Normal))
+                    .size(11)
+                    .color(t::INK),
+            ]
+            .spacing(3)
+            .width(Fill),
+            ghost("Dismiss", on_dismiss, false),
+        ]
+        .spacing(10)
+        .align_y(Alignment::Start),
+    )
+    .padding([8, 10])
+    .style(t::errata)
+    .into()
+}
+
 pub(super) fn friendly_error(error: &str) -> String {
     let lower = error.to_ascii_lowercase();
     if lower.contains("no harmony remote found") || lower.contains("no remote found") {

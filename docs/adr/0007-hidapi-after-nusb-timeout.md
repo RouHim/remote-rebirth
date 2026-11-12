@@ -6,6 +6,6 @@ The raw `nusb`/libusb path detaches `usbhid` and writes 64-byte interrupt report
 
 ## Consequences
 
-- The udev rule covers both the USB device and the `hidraw` node, and grants the `wheel` group access.
+- The udev rule covers both the USB device and the `hidraw` node, and grants the `remote-rebirth` group access (`wheel` may be substituted).
 - The `nusb` dependency is removed.
 - The file-protocol layer is shared through `ReportLink`/`FileProtocol`, so the command and sequence logic is unchanged.

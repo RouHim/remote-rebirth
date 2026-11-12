@@ -28,7 +28,7 @@ An owner describes devices, key assignments, a Watch TV shortcut and favourite c
 **Acceptance**
 
 1. Given a valid model JSON, valid imported IR codes and a connected Harmony 300, when `compose` runs, then it produces a configuration container containing the declared devices on the four device keys, the Watch TV binding and the declared favourites.
-2. Given a composed container, when `write --dry-run` runs, then it validates the model, the backup, the container size, the container checksum and the write plan without opening the remote for writing.
+2. Given a composed container, when `write` runs without `--commit`, then it validates the model, the backup, the container size, the container checksum and the write plan without opening the remote for writing.
 3. Given a composed container and a verified backup, when `write --commit` runs, then the remote is written and read back, and the read-back bytes equal the written bytes.
 4. Given a machine with networking disabled, when every command in this scenario runs, then all of them succeed.
 

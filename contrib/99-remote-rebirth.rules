@@ -2,7 +2,7 @@
 # Gives the dedicated remote-rebirth group read/write access to the Remote without root.
 # Group setup: sudo groupadd -f remote-rebirth && sudo usermod -aG remote-rebirth $USER
 # Works for local seats and for headless/SSH sessions once the user has re-logged in.
-# Wheel members may substitute GROUP="wheel" above if they accept that every
+# Wheel members may substitute GROUP="wheel" below if they accept that every
 # administrator then gets raw HID write access.
 #
 # c124 is the Harmony 300/350. c125 is the Harmony 200: Detect opens it to read

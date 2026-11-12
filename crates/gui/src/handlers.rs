@@ -97,6 +97,10 @@ impl App {
                 self.ui.error = None;
                 Task::none()
             }
+            Message::DismissFirmwareWarning => {
+                self.ui.firmware_warning = None;
+                Task::none()
+            }
             _ => Task::none(),
         }
     }
@@ -154,6 +158,7 @@ impl App {
                 let state_dir = self.project.state_dir.clone();
                 let cancel = self.operation.cancel.clone();
                 self.begin("Preparing a Write");
+                self.refresh_firmware_warning();
                 operation_task(move |progress| {
                     check_cancel(&cancel)?;
                     gui_api::save_model(&model_path, &model).map_err(error_text)?;
@@ -229,6 +234,7 @@ impl App {
                 match path {
                     Ok(path) => {
                         self.begin("Preparing a Restore");
+                        self.refresh_firmware_warning();
                         operation_task(move |progress| {
                             check_cancel(&cancel)?;
                             let mut backend = HidBackend::new();
@@ -399,7 +405,7 @@ impl App {
                     if self.ui.activity_device == old {
                         self.ui.activity_device = name.clone();
                     }
-                    self.persist();
+                    self.mark_dirty();
                 }
                 Task::none()
             }
@@ -650,21 +656,21 @@ impl App {
                 if let Some(step) = self.project.model.activity.steps.get_mut(index) {
                     step.power = non_empty(power);
                 }
-                self.persist();
+                self.mark_dirty();
                 Task::none()
             }
             Message::StepInput(index, input) => {
                 if let Some(step) = self.project.model.activity.steps.get_mut(index) {
                     step.input = non_empty(input);
                 }
-                self.persist();
+                self.mark_dirty();
                 Task::none()
             }
             Message::StepDelay(index, delay) => {
                 if let Some(step) = self.project.model.activity.steps.get_mut(index) {
                     step.delay_ms = delay.parse().unwrap_or(500);
                 }
-                self.persist();
+                self.mark_dirty();
                 Task::none()
             }
             Message::AddStep => {
@@ -744,7 +750,7 @@ impl App {
                 if let Some(favourite) = self.project.model.favourites.get_mut(index) {
                     favourite.channel = channel;
                 }
-                self.persist();
+                self.mark_dirty();
                 Task::none()
             }
             Message::DeleteFavourite(index) => {

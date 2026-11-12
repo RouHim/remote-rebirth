@@ -11,7 +11,7 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use iced::keyboard::{Key, Modifiers, key::Named};
 use iced::{Color, Element, Subscription, Task, Theme};
@@ -47,6 +47,8 @@ pub(crate) struct Project {
     pub(crate) backups: Vec<PathBuf>,
     pub(crate) backup_path: Option<PathBuf>,
     pub(crate) saved: bool,
+    /// A text edit is waiting for the debounced autosave tick.
+    pub(crate) pending_save: bool,
     pub(crate) model_transfer_path: String,
     pub(crate) remote: Option<DetectReport>,
 }
@@ -93,6 +95,8 @@ pub(crate) struct UiState {
     pub(crate) reboot: bool,
     pub(crate) advanced: bool,
     pub(crate) error: Option<String>,
+    /// A firmware version warning computed when a Write or Restore is prepared.
+    pub(crate) firmware_warning: Option<String>,
 }
 
 pub(crate) struct App {
@@ -265,6 +269,7 @@ impl App {
                     backups,
                     backup_path: None,
                     saved: true,
+                    pending_save: false,
                     model_transfer_path: model_path.display().to_string(),
                     remote: None,
                 },
@@ -288,6 +293,7 @@ impl App {
                     status,
                 },
                 ui: UiState {
+                    firmware_warning: None,
                     page,
                     selected_device,
                     selected_key: gui_state.selected_key,
@@ -326,12 +332,20 @@ impl App {
     }
 
     pub(crate) fn subscription(&self) -> Subscription<Message> {
-        iced::keyboard::listen().filter_map(|event| match event {
+        let keys = iced::keyboard::listen().filter_map(|event| match event {
             iced::keyboard::Event::KeyPressed { key, modifiers, .. } => {
                 Some(Message::Shortcut(key, modifiers))
             }
             _ => None,
-        })
+        });
+        if self.project.pending_save {
+            iced::Subscription::batch([
+                keys,
+                iced::time::every(Duration::from_millis(400)).map(|_instant| Message::Autosave),
+            ])
+        } else {
+            keys
+        }
     }
 
     pub(crate) fn update(&mut self, message: Message) -> Task<Message> {
@@ -351,7 +365,14 @@ impl App {
             | Message::UseBackup(_)
             | Message::RefreshBackups
             | Message::DeleteBackup(_)
-            | Message::DismissError => self.on_remote(message),
+            | Message::DismissError
+            | Message::DismissFirmwareWarning => self.on_remote(message),
+            Message::Autosave => {
+                if self.project.pending_save {
+                    self.persist();
+                }
+                Task::none()
+            }
             Message::Detect
             | Message::Backup
             | Message::Compose
@@ -536,6 +557,7 @@ impl App {
         self.operation.committing = false;
         self.operation.cancel.store(false, Ordering::Relaxed);
         self.ui.error = None;
+        self.ui.firmware_warning = None;
         self.operation.progress = Some((status.to_string(), 0.0));
         self.operation.status = status.to_string();
         self.operation.phase = match status {
@@ -695,6 +717,28 @@ impl App {
         }
     }
 
+    /// Mark the Model dirty so the debounced autosave tick persists it.
+    pub(crate) fn mark_dirty(&mut self) {
+        self.project.pending_save = true;
+        self.project.saved = false;
+    }
+
+    /// Compute the firmware warning for the next Prepare, from the last Detect report.
+    pub(crate) fn refresh_firmware_warning(&mut self) {
+        self.ui.firmware_warning = self.project.remote.as_ref().and_then(|remote| {
+            let profile = profile::by_id(&self.project.model.profile)?;
+            if profile::firmware_matches(profile, remote.firmware_version.as_deref()) {
+                None
+            } else {
+                Some(format!(
+                    "This remote reports firmware {}. The write sequence is verified on {} only, so this update is unverified.",
+                    remote.firmware_version.as_deref().unwrap_or("unknown"),
+                    profile.firmware
+                ))
+            }
+        });
+    }
+
     pub(crate) fn save_gui_state(&mut self) {
         let state = GuiState {
             page: self.ui.page.index(),
@@ -716,6 +760,7 @@ impl App {
     }
 
     pub(crate) fn persist(&mut self) {
+        self.project.pending_save = false;
         self.save_gui_state();
         // A prepared Write or Restore is only trustworthy while `model.json` matches the Model in
         // memory, so a failed save must drop it as well as a successful one.

@@ -221,6 +221,9 @@ pub(crate) fn step_label(step: &str) -> &str {
 }
 
 /// Newest first, so the backup list shows the recovery point closest to now.
+///
+/// Names carry `<prefix>-<nanoseconds>-<sequence>.bin`; sorting the whole path would group by
+/// prefix before timestamp (`backup-` sorts after `pre-write-`), so the embedded stamp decides.
 pub(crate) fn list_backups(directory: &Path) -> Vec<PathBuf> {
     let mut backups: Vec<PathBuf> = std::fs::read_dir(directory)
         .into_iter()
@@ -229,9 +232,25 @@ pub(crate) fn list_backups(directory: &Path) -> Vec<PathBuf> {
         .map(|entry| entry.path())
         .filter(|path| path.extension().and_then(|extension| extension.to_str()) == Some("bin"))
         .collect();
-    backups.sort();
-    backups.reverse();
+    backups.sort_by(|left, right| {
+        backup_order(right)
+            .cmp(&backup_order(left))
+            .then_with(|| right.cmp(left))
+    });
     backups
+}
+
+/// The `(timestamp, sequence)` a Backup name embeds, or zero for a foreign file.
+fn backup_order(path: &Path) -> (u128, u64) {
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .and_then(|stem| {
+            let mut parts = stem.rsplit('-');
+            let sequence = parts.next()?.parse().ok()?;
+            let timestamp = parts.next()?.parse().ok()?;
+            Some((timestamp, sequence))
+        })
+        .unwrap_or_default()
 }
 
 /// Index the `.ir` files below `root`, newest scan wins.

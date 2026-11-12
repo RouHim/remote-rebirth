@@ -878,9 +878,8 @@ fn activity_body(
             ));
         }
         if step.delay_ms > 0 {
-            let tenths = (step.delay_ms.saturating_add(99) / 100).clamp(1, 255);
-            let tenths = u8::try_from(tenths)
-                .map_err(|_| Error::Internal("a delay exceeds a byte".into()))?;
+            // The clamp bounds this to 1..=255, so the u8 conversion cannot fail.
+            let tenths = (step.delay_ms.saturating_add(99) / 100).clamp(1, 255) as u8;
             body.push(Instruction::new(
                 DELAY,
                 (u16::from(group_of[device]) << 8) | u16::from(tenths),

@@ -73,43 +73,8 @@ impl From<&RemoteDescriptor> for UsbIdentity {
 /// Identify the connected Remote, refusing nothing: an unsupported model is reported as such.
 pub fn detect(backend: &mut dyn RemoteBackend) -> Result<DetectReport, Error> {
     match detect::select(backend)? {
-        Selected::Other(descriptor) => Ok(DetectReport {
-            schema_version: DETECT_SCHEMA_VERSION,
-            supported: false,
-            model: "unknown Logitech device".into(),
-            family: None,
-            profile: None,
-            architecture: None,
-            skin: None,
-            firmware_version: None,
-            hardware_version: None,
-            guid: None,
-            serial: None,
-            usb: UsbIdentity::from(&descriptor),
-        }),
-        Selected::Harmony(opened) => {
-            let info = &opened.sysinfo;
-            let active = profile::for_identity(info.architecture, info.skin);
-            let model = active
-                .map(|profile| profile.model)
-                .or_else(|| profile::recognized_model(info.architecture, info.skin))
-                .unwrap_or("unknown Harmony Remote")
-                .to_string();
-            Ok(DetectReport {
-                schema_version: DETECT_SCHEMA_VERSION,
-                supported: active.is_some(),
-                model,
-                family: profile::family(opened.descriptor.bcd_device),
-                profile: active.map(|profile| profile.id),
-                architecture: info.architecture,
-                skin: info.skin,
-                firmware_version: info.firmware_version.clone(),
-                hardware_version: info.hardware_version.clone(),
-                guid: info.guid.clone(),
-                serial: info.serial.clone(),
-                usb: UsbIdentity::from(&opened.descriptor),
-            })
-        }
+        Selected::Other(descriptor) => Ok(detect::other_report(&descriptor)),
+        Selected::Harmony(opened) => Ok(detect::harmony_report(&opened)),
     }
 }
 
