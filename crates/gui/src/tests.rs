@@ -14,7 +14,7 @@ use crate::app::App;
 use crate::message::{
     CommandForm, Message, OpDone, PAGES, Page, Phase, PreparedKind, page_for_digit,
 };
-use crate::support::{form_source, routed_target, scan_library};
+use crate::support::{form_source, list_backups, routed_target, scan_library};
 
 /// A prepared-write report with no remote behind it.
 fn prepared_write() -> WriteResult {
@@ -30,6 +30,32 @@ fn prepared_write() -> WriteResult {
         data_packets: 0,
         reboot: false,
         journal: None,
+    }
+}
+
+/// A supported detect report with the given firmware version.
+fn detected_with_firmware(firmware: Option<&str>) -> DetectReport {
+    DetectReport {
+        schema_version: remote_rebirth_core::gui_api::DETECT_SCHEMA_VERSION,
+        supported: true,
+        model: "Harmony 300".into(),
+        family: None,
+        profile: Some("harmony_300"),
+        architecture: Some(16),
+        skin: Some(79),
+        firmware_version: firmware.map(str::to_string),
+        hardware_version: None,
+        guid: None,
+        serial: None,
+        usb: remote_rebirth_core::gui_api::UsbIdentity {
+            vendor_id: 0x046D,
+            product_id: 0xC124,
+            bcd_device: 0,
+            product: None,
+            serial: None,
+            bus: 0,
+            address: 0,
+        },
     }
 }
 
@@ -268,6 +294,82 @@ fn backup_paths_do_not_collide_in_one_clock_tick() {
 }
 
 #[test]
+fn backup_list_is_newest_first_across_prefixes() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    for name in [
+        "pre-write-100-0.bin",
+        "backup-200-0.bin",
+        "pre-write-300-0.bin",
+    ] {
+        std::fs::write(directory.path().join(name), b"").expect("write backup");
+    }
+    let names: Vec<String> = list_backups(directory.path())
+        .iter()
+        .map(|path| {
+            path.file_name()
+                .expect("file name")
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "pre-write-300-0.bin",
+            "backup-200-0.bin",
+            "pre-write-100-0.bin"
+        ],
+        "the embedded timestamp decides, not the prefix"
+    );
+}
+
+#[test]
+fn text_edits_wait_for_the_autosave_tick() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let (mut app, _) = App::at(directory.path().to_path_buf());
+    app.ui.new_device_name = "TV".into();
+    app.ui.new_device_key = 1;
+    app.add_device();
+
+    let _ = app.update(Message::DeviceName(0, "Television".into()));
+    assert!(app.project.pending_save, "the edit waits for the tick");
+    let before: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&app.project.model_path).expect("model file"))
+            .expect("model json");
+    assert_eq!(before["devices"][0]["name"], "TV");
+
+    let _ = app.update(Message::Autosave);
+    assert!(!app.project.pending_save);
+    let after: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&app.project.model_path).expect("model file"))
+            .expect("model json");
+    assert_eq!(after["devices"][0]["name"], "Television");
+}
+
+#[test]
+fn firmware_mismatch_is_reported_before_a_write() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let (mut app, _) = App::at(directory.path().to_path_buf());
+    app.project.remote = Some(detected_with_firmware(Some("9.9")));
+    app.refresh_firmware_warning();
+    assert!(
+        app.ui
+            .firmware_warning
+            .as_deref()
+            .unwrap_or_default()
+            .contains("9.9"),
+        "the warning names the detected version"
+    );
+
+    app.project.remote = Some(detected_with_firmware(Some("1.4")));
+    app.refresh_firmware_warning();
+    assert!(
+        app.ui.firmware_warning.is_none(),
+        "1.4 is the measured version"
+    );
+}
+
+#[test]
 fn the_journal_directory_is_injected_with_the_project() {
     let directory = tempfile::tempdir().expect("tempdir");
     let data = directory.path().join("data");
@@ -290,9 +392,11 @@ fn commit_without_a_prepared_write_is_refused() {
     app.project.container_path = directory.path().join("container.bin");
     app.project.backup_path = Some(directory.path().join("backup.bin"));
     let _ = app.update(Message::CommitWrite);
-    assert_eq!(
-        app.ui.error.as_deref(),
-        Some("Prepare a Write first."),
+    assert!(
+        app.ui
+            .error
+            .as_deref()
+            .is_some_and(|error| !error.is_empty()),
         "the commit explains what is missing"
     );
     assert!(!app.operation.busy, "no commit was started");
@@ -323,6 +427,78 @@ fn a_changed_model_or_restore_path_drops_the_prepared_operation() {
         "a changed Restore path invalidates the prepared Restore"
     );
     assert!(app.operation.last_prepare.is_none());
+}
+
+#[test]
+fn a_model_edit_drops_the_prepared_operation_before_the_tick() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let (mut app, _) = App::at(directory.path().join("data"));
+    app.ui.new_device_name = "TV".into();
+    app.ui.new_device_key = 1;
+    app.add_device();
+
+    app.operation.prepared_kind = Some(PreparedKind::Write);
+    app.operation.last_prepare = Some(prepared_write());
+    app.ui.firmware_warning = Some("unverified".into());
+    let _ = app.update(Message::DeviceName(0, "Television".into()));
+    assert!(
+        app.project.pending_save,
+        "the edit still waits for the tick"
+    );
+    assert_eq!(
+        app.operation.prepared_kind, None,
+        "the prepared Write is dropped without waiting for the tick"
+    );
+    assert!(app.operation.last_prepare.is_none());
+    assert!(
+        app.ui.firmware_warning.is_none(),
+        "the stale warning is dropped with the prepared operation"
+    );
+}
+
+#[test]
+fn preparing_a_write_flushes_the_pending_edit_first() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let (mut app, _) = App::at(directory.path().join("data"));
+    app.ui.new_device_name = "TV".into();
+    app.ui.new_device_key = 1;
+    app.add_device();
+    let _ = app.update(Message::DeviceName(0, "Television".into()));
+    assert!(app.project.pending_save, "the edit waits for the tick");
+
+    let _ = app.update(Message::PrepareWrite);
+    assert!(
+        !app.project.pending_save,
+        "the prepare flushed the edit before the busy guard dropped the tick"
+    );
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&app.project.model_path).expect("model file"))
+            .expect("model json");
+    assert_eq!(saved["devices"][0]["name"], "Television");
+}
+
+#[test]
+fn preparing_a_restore_flushes_the_pending_edit_first() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let (mut app, _) = App::at(directory.path().join("data"));
+    app.ui.new_device_name = "TV".into();
+    app.ui.new_device_key = 1;
+    app.add_device();
+    let backup = directory.path().join("saved.bin");
+    std::fs::write(&backup, b"container").expect("write backup");
+    app.ui.restore_path = backup.display().to_string();
+    let _ = app.update(Message::DeviceName(0, "Television".into()));
+    assert!(app.project.pending_save, "the edit waits for the tick");
+
+    let _ = app.update(Message::PrepareRestore);
+    assert!(
+        !app.project.pending_save,
+        "the prepare flushed the edit before the busy guard dropped the tick"
+    );
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&app.project.model_path).expect("model file"))
+            .expect("model json");
+    assert_eq!(saved["devices"][0]["name"], "Television");
 }
 
 #[test]

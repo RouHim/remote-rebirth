@@ -165,6 +165,8 @@ pub(crate) enum Message {
     RefreshBackups,
     DeleteBackup(PathBuf),
     DismissError,
+    DismissFirmwareWarning,
+    Autosave,
 }
 
 /// One device found by a local IR Library scan.

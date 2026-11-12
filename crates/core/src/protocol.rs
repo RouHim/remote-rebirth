@@ -163,6 +163,15 @@ impl<L: ReportLink> FileProtocol<L> {
         }
     }
 
+    /// The reports this session sent, for tests that assert the wire bytes.
+    #[cfg(test)]
+    pub(crate) fn sent_reports(&self) -> &[[u8; REPORT_BYTES]]
+    where
+        L: AsRef<[[u8; REPORT_BYTES]]>,
+    {
+        self.link.as_ref()
+    }
+
     fn command(&mut self, command: u8, params: &[Param<'_>]) -> Result<[u8; REPORT_BYTES], Error> {
         let sequence = self.sequence.take();
         let request = encode_request(command, sequence, params)?;

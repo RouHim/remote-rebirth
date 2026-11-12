@@ -28,7 +28,6 @@ pub struct ModelProfile {
     pub skins: &'static [SkinProfile],
     pub max_devices: usize,
     pub max_ir_groups: usize,
-    pub long_press: bool,
     /// The keys a model's canonical key names may bind, and the scan code each raises.
     pub key_layout: &'static [KeyBinding],
     /// The scan code of each Device Key, in place order: top left, top right, bottom left, bottom
@@ -262,7 +261,6 @@ pub const HARMONY_300: ModelProfile = ModelProfile {
     skins: HARMONY_300_SKINS,
     max_devices: 4,
     max_ir_groups: 4,
-    long_press: false,
     key_layout: HARMONY_300_KEYS,
     device_key_scans: HARMONY_300_DEVICE_KEY_SCANS,
     device_key_labels: HARMONY_300_DEVICE_KEY_LABELS,
@@ -293,7 +291,6 @@ pub const HARMONY_350_TEST: ModelProfile = ModelProfile {
     skins: HARMONY_350_TEST_SKINS,
     max_devices: 5,
     max_ir_groups: 5,
-    long_press: false,
     key_layout: HARMONY_300_KEYS,
     device_key_scans: &[5, 1, 7, 4, 25],
     device_key_labels: &["TV", "Cable/Sat", "DVD", "VCR/Aux", "Aux 2"],

@@ -1,8 +1,8 @@
 //! The Remote page: identity, backups, and the write/restore path.
 
 use super::widgets::{
-    backup_row, body, danger, data_line, errata, ghost, note, paint, primary, procedure, secondary,
-    section, stamp,
+    backup_row, body, danger, data_line, errata, ghost, note, notice, paint, primary, procedure,
+    secondary, section, stamp,
 };
 use crate::app::App;
 use crate::message::{Message, Phase, PreparedKind};
@@ -101,6 +101,15 @@ pub(super) fn remote_page(app: &App) -> Element<'_, Message> {
     let right = column![
         if let Some(error) = &app.ui.error {
             errata(app, error)
+        } else {
+            iced::widget::Space::new().height(0).into()
+        },
+        if let Some(warning) = &app.ui.firmware_warning {
+            notice(
+                "Unverified firmware",
+                warning,
+                Message::DismissFirmwareWarning,
+            )
         } else {
             iced::widget::Space::new().height(0).into()
         },

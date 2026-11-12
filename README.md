@@ -70,7 +70,8 @@ surface. The GUI links the same core as the
 CLI, never shells out, and contains no network client.
 
 The GUI manages an active Model at `$XDG_DATA_HOME/remote-rebirth/model.json` (falling back to
-`$HOME/.local/share/remote-rebirth/model.json`), keeps automatic and manual Backups under
+`$HOME/.local/share/remote-rebirth/model.json`, then to the relative `.remote-rebirth/model.json`
+when neither variable is set), keeps automatic and manual Backups under
 `backups/`, and drives the same verified Write and Restore path as the CLI. It covers Detect,
 Backup, Device and Command editing, the Key Map with volume/channel Routing, Prepare/Commit Write,
 Prepare/Commit Restore, the Watch TV Activity and Favourites, and an IR Library browser that scans
@@ -106,10 +107,14 @@ other inputs: `backup` prints the Backup sidecar schema, `compose` prints the mo
 Model v2 is the current format. `compose --print-schema` prints the v2 schema, `compose` reads v2
 Models, and the resolved-model sidecar it writes declares `schema_version: 2`. Model v1 is still
 accepted on input — the validator allows `schema_version` 1 through 2 (`MIN_SCHEMA_VERSION`) — as
-long as a v1 Model declares no `routing`. The v1 schema files stay in the repository at
-`crates/core/schema/model-v1.json` and `crates/core/schema/resolved-model-v1.json`; no CLI flag
-prints either of them. `resolved-model-v1.json` is unreferenced — no source, test or flag reads it —
-and is retained for now. New Models should be v2.
+long as a v1 Model declares no `routing`. The v1 input schema stays in the repository at
+`crates/core/schema/model-v1.json`; no CLI flag prints it. The v1 resolved-model schema was removed
+because no source, test or flag read it. New Models should be v2.
+
+The published v2 schema is profile-agnostic: it allows up to 8 devices and any non-negative delay,
+while the active Model Profile may be stricter (Harmony 300: 4 devices). Compose rounds a positive
+delay up to 100 ms steps and clamps it to 1–255 tenths of a second (0.1–25.5 s); `delay_ms` 0 emits
+no wait at all.
 
 ## Safety model
 

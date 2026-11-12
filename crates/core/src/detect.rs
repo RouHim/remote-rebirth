@@ -9,9 +9,8 @@
 use std::io::Write;
 
 use crate::error::Error;
+use crate::gui_api::{DETECT_SCHEMA_VERSION, DetectReport, UsbIdentity};
 use crate::profile;
-#[cfg(feature = "cli")]
-use crate::profile::ModelProfile;
 use crate::protocol::REPORT_BYTES;
 use crate::sysinfo::{self, SysInfo};
 use crate::transport::{RemoteBackend, RemoteDescriptor, RemoteSelector, RemoteSession, read_file};
@@ -148,6 +147,48 @@ fn open(
     })
 }
 
+/// The typed identity report for an opened Harmony, shared by the CLI and the GUI.
+pub(crate) fn harmony_report(opened: &OpenedRemote) -> DetectReport {
+    let info = &opened.sysinfo;
+    let profile = profile::for_identity(info.architecture, info.skin);
+    let model = profile
+        .map(|profile| profile.model)
+        .or_else(|| profile::recognized_model(info.architecture, info.skin))
+        .unwrap_or("unknown Harmony Remote");
+    DetectReport {
+        schema_version: DETECT_SCHEMA_VERSION,
+        supported: profile.is_some(),
+        model: model.to_string(),
+        family: profile::family(opened.descriptor.bcd_device),
+        profile: profile.map(|profile| profile.id),
+        architecture: info.architecture,
+        skin: info.skin,
+        firmware_version: info.firmware_version.clone(),
+        hardware_version: info.hardware_version.clone(),
+        guid: info.guid.clone(),
+        serial: info.serial.clone(),
+        usb: UsbIdentity::from(&opened.descriptor),
+    }
+}
+
+/// The typed report for a single Logitech device that is not a Harmony Remote.
+pub(crate) fn other_report(descriptor: &RemoteDescriptor) -> DetectReport {
+    DetectReport {
+        schema_version: DETECT_SCHEMA_VERSION,
+        supported: false,
+        model: "unknown Logitech device".into(),
+        family: None,
+        profile: None,
+        architecture: None,
+        skin: None,
+        firmware_version: None,
+        hardware_version: None,
+        guid: None,
+        serial: None,
+        usb: UsbIdentity::from(descriptor),
+    }
+}
+
 #[cfg(feature = "cli")]
 pub fn run(
     backend: &mut dyn RemoteBackend,
@@ -165,70 +206,49 @@ pub fn run(
 
 #[cfg(feature = "cli")]
 fn report_harmony(opened: &OpenedRemote, json: bool, stdout: &mut dyn Write) -> Result<(), Error> {
-    let info = &opened.sysinfo;
-    let profile: Option<&ModelProfile> = profile::for_identity(info.architecture, info.skin);
-    let model = profile
-        .map(|profile| profile.model)
-        .or_else(|| profile::recognized_model(info.architecture, info.skin))
-        .unwrap_or("unknown Harmony Remote");
-    let supported = profile.is_some();
-    let family = profile::family(opened.descriptor.bcd_device);
+    let report = harmony_report(opened);
     tracing::info!(
-        model,
-        supported,
-        profile = profile.map(|profile| profile.id).unwrap_or("none"),
+        model = %report.model,
+        supported = report.supported,
+        profile = report.profile.unwrap_or("none"),
         "identified Remote"
     );
 
     if json {
-        let report = crate::gui_api::DetectReport {
-            schema_version: crate::gui_api::DETECT_SCHEMA_VERSION,
-            supported,
-            model: model.to_string(),
-            family,
-            profile: profile.map(|profile| profile.id),
-            architecture: info.architecture,
-            skin: info.skin,
-            firmware_version: info.firmware_version.clone(),
-            hardware_version: info.hardware_version.clone(),
-            guid: info.guid.clone(),
-            serial: info.serial.clone(),
-            usb: crate::gui_api::UsbIdentity::from(&opened.descriptor),
-        };
         serde_json::to_writer_pretty(&mut *stdout, &report)?;
         writeln!(stdout)?;
         return Ok(());
     }
 
-    writeln!(stdout, "Model: {model}")?;
+    writeln!(stdout, "Model: {}", report.model)?;
     writeln!(
         stdout,
         "Supported: {}",
-        if supported { "yes" } else { "no" }
+        if report.supported { "yes" } else { "no" }
     )?;
-    if let Some(family) = family {
+    if let Some(family) = report.family {
         writeln!(stdout, "Family: {family}")?;
     }
-    if let Some(architecture) = info.architecture {
+    if let Some(architecture) = report.architecture {
         writeln!(stdout, "Architecture: {architecture}")?;
     }
-    if let Some(skin) = info.skin {
+    if let Some(skin) = report.skin {
         writeln!(stdout, "Skin: {skin}")?;
     }
-    if let Some(version) = &info.firmware_version {
+    if let Some(version) = &report.firmware_version {
         writeln!(stdout, "Firmware: {version}")?;
     }
-    if let Some(version) = &info.hardware_version {
+    if let Some(version) = &report.hardware_version {
         writeln!(stdout, "Hardware: {version}")?;
     }
-    if let Some(guid) = &info.guid {
+    if let Some(guid) = &report.guid {
         writeln!(stdout, "GUID: {guid}")?;
     }
-    if let Some(serial) = &info.serial {
+    if let Some(serial) = &report.serial {
         writeln!(stdout, "Serial: {serial}")?;
     }
-    write_usb(stdout, &opened.descriptor)?;
-    if !supported {
+    write_usb(stdout, &report.usb)?;
+    if !report.supported {
         writeln!(
             stdout,
             "This model is recognised but not supported in this version; no write will be performed."
@@ -248,29 +268,16 @@ fn report_other(
         product_id = format_args!("0x{:04X}", descriptor.product_id),
         "the connected Logitech device is not a Harmony Remote"
     );
+    let report = other_report(descriptor);
     if json {
-        let report = crate::gui_api::DetectReport {
-            schema_version: crate::gui_api::DETECT_SCHEMA_VERSION,
-            supported: false,
-            model: "unknown Logitech device".into(),
-            family: None,
-            profile: None,
-            architecture: None,
-            skin: None,
-            firmware_version: None,
-            hardware_version: None,
-            guid: None,
-            serial: None,
-            usb: crate::gui_api::UsbIdentity::from(descriptor),
-        };
         serde_json::to_writer_pretty(&mut *stdout, &report)?;
         writeln!(stdout)?;
         return Ok(());
     }
 
-    writeln!(stdout, "Model: unknown Logitech device")?;
+    writeln!(stdout, "Model: {}", report.model)?;
     writeln!(stdout, "Supported: no")?;
-    write_usb(stdout, descriptor)?;
+    write_usb(stdout, &report.usb)?;
     writeln!(
         stdout,
         "This Logitech device is not a Harmony Remote; connect a Harmony 300 and retry."
@@ -279,16 +286,16 @@ fn report_other(
 }
 
 #[cfg(feature = "cli")]
-fn write_usb(stdout: &mut dyn Write, descriptor: &RemoteDescriptor) -> Result<(), Error> {
+fn write_usb(stdout: &mut dyn Write, usb: &UsbIdentity) -> Result<(), Error> {
     writeln!(
         stdout,
         "USB: vendor 0x{:04X} product 0x{:04X} bcdDevice 0x{:04X} ({}), bus {} address {}",
-        descriptor.vendor_id,
-        descriptor.product_id,
-        descriptor.bcd_device,
-        descriptor.product.as_deref().unwrap_or("unknown product"),
-        descriptor.bus,
-        descriptor.address
+        usb.vendor_id,
+        usb.product_id,
+        usb.bcd_device,
+        usb.product.as_deref().unwrap_or("unknown product"),
+        usb.bus,
+        usb.address
     )?;
     Ok(())
 }

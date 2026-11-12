@@ -97,6 +97,10 @@ impl App {
                 self.ui.error = None;
                 Task::none()
             }
+            Message::DismissFirmwareWarning => {
+                self.ui.firmware_warning = None;
+                Task::none()
+            }
             _ => Task::none(),
         }
     }
@@ -153,7 +157,12 @@ impl App {
                 let reboot = self.ui.reboot;
                 let state_dir = self.project.state_dir.clone();
                 let cancel = self.operation.cancel.clone();
+                // Flush the debounced edit before the busy guard starts dropping Autosave ticks,
+                // so the worker saves the Model the user prepared and no tick is left armed to
+                // wipe the result once it lands.
+                self.persist();
                 self.begin("Preparing a Write");
+                self.refresh_firmware_warning();
                 operation_task(move |progress| {
                     check_cancel(&cancel)?;
                     gui_api::save_model(&model_path, &model).map_err(error_text)?;
@@ -228,7 +237,11 @@ impl App {
                 let cancel = self.operation.cancel.clone();
                 match path {
                     Ok(path) => {
+                        // Same flush as PrepareWrite: the armed tick must not survive into a
+                        // window where the prepared Restore is committable.
+                        self.persist();
                         self.begin("Preparing a Restore");
+                        self.refresh_firmware_warning();
                         operation_task(move |progress| {
                             check_cancel(&cancel)?;
                             let mut backend = HidBackend::new();
@@ -399,7 +412,7 @@ impl App {
                     if self.ui.activity_device == old {
                         self.ui.activity_device = name.clone();
                     }
-                    self.persist();
+                    self.mark_dirty();
                 }
                 Task::none()
             }
@@ -650,21 +663,21 @@ impl App {
                 if let Some(step) = self.project.model.activity.steps.get_mut(index) {
                     step.power = non_empty(power);
                 }
-                self.persist();
+                self.mark_dirty();
                 Task::none()
             }
             Message::StepInput(index, input) => {
                 if let Some(step) = self.project.model.activity.steps.get_mut(index) {
                     step.input = non_empty(input);
                 }
-                self.persist();
+                self.mark_dirty();
                 Task::none()
             }
             Message::StepDelay(index, delay) => {
                 if let Some(step) = self.project.model.activity.steps.get_mut(index) {
                     step.delay_ms = delay.parse().unwrap_or(500);
                 }
-                self.persist();
+                self.mark_dirty();
                 Task::none()
             }
             Message::AddStep => {
@@ -744,7 +757,7 @@ impl App {
                 if let Some(favourite) = self.project.model.favourites.get_mut(index) {
                     favourite.channel = channel;
                 }
-                self.persist();
+                self.mark_dirty();
                 Task::none()
             }
             Message::DeleteFavourite(index) => {
