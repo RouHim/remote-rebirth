@@ -157,6 +157,10 @@ impl App {
                 let reboot = self.ui.reboot;
                 let state_dir = self.project.state_dir.clone();
                 let cancel = self.operation.cancel.clone();
+                // Flush the debounced edit before the busy guard starts dropping Autosave ticks,
+                // so the worker saves the Model the user prepared and no tick is left armed to
+                // wipe the result once it lands.
+                self.persist();
                 self.begin("Preparing a Write");
                 self.refresh_firmware_warning();
                 operation_task(move |progress| {
@@ -233,6 +237,9 @@ impl App {
                 let cancel = self.operation.cancel.clone();
                 match path {
                     Ok(path) => {
+                        // Same flush as PrepareWrite: the armed tick must not survive into a
+                        // window where the prepared Restore is committable.
+                        self.persist();
                         self.begin("Preparing a Restore");
                         self.refresh_firmware_warning();
                         operation_task(move |progress| {

@@ -112,8 +112,9 @@ long as a v1 Model declares no `routing`. The v1 input schema stays in the repos
 because no source, test or flag read it. New Models should be v2.
 
 The published v2 schema is profile-agnostic: it allows up to 8 devices and any non-negative delay,
-while the active Model Profile may be stricter (Harmony 300: 4 devices) and Compose clamps delays to
-1–255 tenths of a second (0.1–25.5 s).
+while the active Model Profile may be stricter (Harmony 300: 4 devices). Compose rounds a positive
+delay up to 100 ms steps and clamps it to 1–255 tenths of a second (0.1–25.5 s); `delay_ms` 0 emits
+no wait at all.
 
 ## Safety model
 

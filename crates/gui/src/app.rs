@@ -718,9 +718,16 @@ impl App {
     }
 
     /// Mark the Model dirty so the debounced autosave tick persists it.
+    ///
+    /// The prepared operation is dropped here, not on the tick: a Write or Restore prepared
+    /// against the Model on disk stops being trustworthy the moment the Model in memory changes,
+    /// and the debounce would otherwise leave it committable for one more window.
     pub(crate) fn mark_dirty(&mut self) {
         self.project.pending_save = true;
         self.project.saved = false;
+        self.operation.prepared_kind = None;
+        self.operation.last_prepare = None;
+        self.ui.firmware_warning = None;
     }
 
     /// Compute the firmware warning for the next Prepare, from the last Detect report.
@@ -766,6 +773,7 @@ impl App {
         // memory, so a failed save must drop it as well as a successful one.
         self.operation.prepared_kind = None;
         self.operation.last_prepare = None;
+        self.ui.firmware_warning = None;
         if let Err(error) = gui_api::save_model(&self.project.model_path, &self.project.model) {
             self.ui.error = Some(error_text(error));
             self.project.saved = false;

@@ -124,7 +124,7 @@
         "input": { "type": "string", "minLength": 1 },
         "delay_ms": {
           "type": "integer",
-          "description": "Compose rounds up to 100 ms steps and clamps to 1-255 tenths of a second (0.1-25.5 s).",
+          "description": "0 emits no wait; a positive delay is rounded up to 100 ms steps and clamped to 1-255 tenths of a second (0.1-25.5 s).",
           "minimum": 0,
           "default": 500
         }

@@ -430,6 +430,78 @@ fn a_changed_model_or_restore_path_drops_the_prepared_operation() {
 }
 
 #[test]
+fn a_model_edit_drops_the_prepared_operation_before_the_tick() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let (mut app, _) = App::at(directory.path().join("data"));
+    app.ui.new_device_name = "TV".into();
+    app.ui.new_device_key = 1;
+    app.add_device();
+
+    app.operation.prepared_kind = Some(PreparedKind::Write);
+    app.operation.last_prepare = Some(prepared_write());
+    app.ui.firmware_warning = Some("unverified".into());
+    let _ = app.update(Message::DeviceName(0, "Television".into()));
+    assert!(
+        app.project.pending_save,
+        "the edit still waits for the tick"
+    );
+    assert_eq!(
+        app.operation.prepared_kind, None,
+        "the prepared Write is dropped without waiting for the tick"
+    );
+    assert!(app.operation.last_prepare.is_none());
+    assert!(
+        app.ui.firmware_warning.is_none(),
+        "the stale warning is dropped with the prepared operation"
+    );
+}
+
+#[test]
+fn preparing_a_write_flushes_the_pending_edit_first() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let (mut app, _) = App::at(directory.path().join("data"));
+    app.ui.new_device_name = "TV".into();
+    app.ui.new_device_key = 1;
+    app.add_device();
+    let _ = app.update(Message::DeviceName(0, "Television".into()));
+    assert!(app.project.pending_save, "the edit waits for the tick");
+
+    let _ = app.update(Message::PrepareWrite);
+    assert!(
+        !app.project.pending_save,
+        "the prepare flushed the edit before the busy guard dropped the tick"
+    );
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&app.project.model_path).expect("model file"))
+            .expect("model json");
+    assert_eq!(saved["devices"][0]["name"], "Television");
+}
+
+#[test]
+fn preparing_a_restore_flushes_the_pending_edit_first() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let (mut app, _) = App::at(directory.path().join("data"));
+    app.ui.new_device_name = "TV".into();
+    app.ui.new_device_key = 1;
+    app.add_device();
+    let backup = directory.path().join("saved.bin");
+    std::fs::write(&backup, b"container").expect("write backup");
+    app.ui.restore_path = backup.display().to_string();
+    let _ = app.update(Message::DeviceName(0, "Television".into()));
+    assert!(app.project.pending_save, "the edit waits for the tick");
+
+    let _ = app.update(Message::PrepareRestore);
+    assert!(
+        !app.project.pending_save,
+        "the prepare flushed the edit before the busy guard dropped the tick"
+    );
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&app.project.model_path).expect("model file"))
+            .expect("model json");
+    assert_eq!(saved["devices"][0]["name"], "Television");
+}
+
+#[test]
 fn the_commit_lock_lasts_only_for_the_commit() {
     let directory = tempfile::tempdir().expect("tempdir");
     let (mut app, _) = App::at(directory.path().join("data"));
